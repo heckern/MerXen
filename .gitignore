@@ -1,3 +1,19 @@
+# Spatial data files
+*.zarr/
+*.npy
+*.tiff
+*.tif
+*.h5ad
+
+# Nextflow
+work/
+.nextflow/
+.nextflow.log*
+timeline-*.html
+report-*.html
+trace-*.txt
+dag-*.dot
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
