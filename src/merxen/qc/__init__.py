@@ -1,0 +1,26 @@
+"""MerXen qc subpackage."""
+
+from merxen.qc.gene_comparison import (
+    apply_dataset_filter,
+    compare_df,
+    compute_gene_comparison,
+    compute_gene_comparison_from_paths,
+    fit_linear,
+    gene_totals_from_points,
+    gene_totals_from_table,
+    normalize_counts,
+)
+from merxen.qc.metrics import compute_dataset_qc, save_dataset_qc
+
+__all__ = [
+    "apply_dataset_filter",
+    "compare_df",
+    "compute_dataset_qc",
+    "compute_gene_comparison",
+    "compute_gene_comparison_from_paths",
+    "fit_linear",
+    "gene_totals_from_points",
+    "gene_totals_from_table",
+    "normalize_counts",
+    "save_dataset_qc",
+]
