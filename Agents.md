@@ -82,7 +82,7 @@ Do not duplicate dependencies across environment.yml and pyproject.toml. If it c
 Generate a lockfile to pin the full resolved dependency tree:
 
 ```bash
-uv pip compile pyproject.toml -o requirements.lock
+uv pip compile pyproject.toml --extra dev -o requirements.lock
 ```
 
 Commit `requirements.lock` to version control. Regenerate it when you add or update dependencies. For reproducible installs (CI, onboarding):
