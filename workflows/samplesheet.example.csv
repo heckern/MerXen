@@ -1,0 +1,2 @@
+pair_id,merscope_zarr_path,merscope_image_prefix,merscope_z_range,merscope_transform_path,merscope_channels,xenium_dir,xenium_channels,xenium_min_qv,merscope_voxel_layers,xenium_voxel_layers,xenium_spec_path
+PAIR_TEST,/tmp/merscope.zarr,primary,0-6,/tmp/merscope_transform.txt,"DAPI,PolyT",/tmp/xenium,"DAPI,18S",20,7,2,/tmp/experiment.xenium
