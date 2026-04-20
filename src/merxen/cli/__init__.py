@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from merxen.cli.run_build_spatialdata import build_spatialdata_command
 from merxen.cli.run_comparison import compare_command
 from merxen.cli.run_enrichment import enrich_command
 from merxen.cli.run_qc import qc_command
@@ -16,6 +17,7 @@ def main() -> None:
     """MerXen spatial transcriptomics pipeline CLI."""
 
 
+main.add_command(build_spatialdata_command)
 main.add_command(segment_command)
 main.add_command(enrich_command)
 main.add_command(qc_command)
