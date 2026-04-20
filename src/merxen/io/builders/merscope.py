@@ -90,7 +90,8 @@ def write_merscope_spatialdata(
     )
     if len(z_layers) == 0:
         raise FileNotFoundError(
-            f"[MERSCOPE] No image z-layers found in {input_path / MerscopeKeys.IMAGES_DIR}"
+            "[MERSCOPE] No image z-layers found in"
+            f" {input_path / MerscopeKeys.IMAGES_DIR}"
         )
 
     try:
@@ -109,7 +110,8 @@ def write_merscope_spatialdata(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "[MERSCOPE] spatialdata_io.merscope failed (%s). Falling back to local reader.",
+                "[MERSCOPE] spatialdata_io.merscope failed (%s)."
+                " Falling back to local reader.",
                 exc,
             )
 
@@ -277,7 +279,9 @@ def _get_channel_names(images_dir: Path) -> list[str]:
 def _get_reader(backend: str | None) -> Callable[..., Image2DModel]:
     """Choose the preferred raster backend for reading MERSCOPE planes."""
     if backend is not None:
-        return _rioxarray_load_merscope if backend == "rioxarray" else _dask_image_load_merscope
+        if backend == "rioxarray":
+            return _rioxarray_load_merscope
+        return _dask_image_load_merscope
     try:
         import rioxarray  # noqa: F401
 
@@ -434,17 +438,27 @@ def _get_table(
     region: str,
 ) -> anndata.AnnData:
     """Build a cell-by-gene AnnData table from raw MERSCOPE CSV files."""
-    data = pd.read_csv(count_path, index_col=0, dtype={MerscopeKeys.COUNTS_CELL_KEY: str})
-    obs = pd.read_csv(obs_path, index_col=0, dtype={MerscopeKeys.METADATA_CELL_KEY: str})
+    data = pd.read_csv(
+        count_path, index_col=0, dtype={MerscopeKeys.COUNTS_CELL_KEY: str}
+    )
+    obs = pd.read_csv(
+        obs_path, index_col=0, dtype={MerscopeKeys.METADATA_CELL_KEY: str}
+    )
 
     is_gene = ~data.columns.str.lower().str.contains("blank")
     adata = anndata.AnnData(data.loc[:, is_gene], dtype=data.values.dtype, obs=obs)
     adata.obsm["blank"] = data.loc[:, ~is_gene]
     adata.obsm["spatial"] = adata.obs[[MerscopeKeys.CELL_X, MerscopeKeys.CELL_Y]].values
-    adata.obs["region"] = pd.Series(vizgen_region, index=adata.obs_names, dtype="category")
+    adata.obs["region"] = pd.Series(
+        vizgen_region, index=adata.obs_names, dtype="category"
+    )
     adata.obs["slide"] = pd.Series(slide_name, index=adata.obs_names, dtype="category")
-    adata.obs["dataset_id"] = pd.Series(dataset_id, index=adata.obs_names, dtype="category")
-    adata.obs[MerscopeKeys.REGION_KEY] = pd.Series(region, index=adata.obs_names, dtype="category")
+    adata.obs["dataset_id"] = pd.Series(
+        dataset_id, index=adata.obs_names, dtype="category"
+    )
+    adata.obs[MerscopeKeys.REGION_KEY] = pd.Series(
+        region, index=adata.obs_names, dtype="category"
+    )
     adata.obs[MerscopeKeys.METADATA_CELL_KEY] = adata.obs.index
 
     return TableModel.parse(

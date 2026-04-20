@@ -19,11 +19,9 @@ def test_parse_samplesheet_supports_raw_dirs_and_cached_spatialdata(
     xenium_dir.mkdir()
     csv_path = tmp_path / "samplesheet.csv"
     csv_path.write_text(
-        (
-            "pair_id,merscope_dir,merscope_spatialdata_path,merscope_z_range,"
-            "merscope_channels,xenium_dir,xenium_spatialdata_path,xenium_channels\n"
-            f"P1,{merscope_dir},,1-6,\"DAPI,PolyT\",{xenium_dir},,\"DAPI,18S\"\n"
-        )
+        "pair_id,merscope_dir,merscope_spatialdata_path,merscope_z_range,"
+        "merscope_channels,xenium_dir,xenium_spatialdata_path,xenium_channels\n"
+        f'P1,{merscope_dir},,1-6,"DAPI,PolyT",{xenium_dir},,"DAPI,18S"\n'
     )
 
     pairs = parse_samplesheet(csv_path)
@@ -49,10 +47,7 @@ def test_parse_samplesheet_supports_legacy_merscope_zarr_alias(
     xenium_dir.mkdir()
     csv_path = tmp_path / "legacy_samplesheet.csv"
     csv_path.write_text(
-        (
-            "pair_id,merscope_zarr_path,xenium_dir\n"
-            f"P1,{merscope_zarr},{xenium_dir}\n"
-        )
+        f"pair_id,merscope_zarr_path,xenium_dir\nP1,{merscope_zarr},{xenium_dir}\n"
     )
 
     pairs = parse_samplesheet(csv_path)
@@ -72,10 +67,8 @@ def test_validate_samplesheet_accepts_existing_cached_zarr_without_raw_dir(
     xenium_zarr.mkdir()
     csv_path = tmp_path / "samplesheet.csv"
     csv_path.write_text(
-        (
-            "pair_id,merscope_spatialdata_path,xenium_spatialdata_path\n"
-            f"P1,{merscope_zarr},{xenium_zarr}\n"
-        )
+        "pair_id,merscope_spatialdata_path,xenium_spatialdata_path\n"
+        f"P1,{merscope_zarr},{xenium_zarr}\n"
     )
 
     pairs = parse_samplesheet(csv_path)

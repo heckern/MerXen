@@ -634,7 +634,8 @@ def enrich_single_latest(
             )
             if copied_shapes == 0:
                 raise RuntimeError(
-                    "[XENIUM] No cell/nucleus shapes found in the built SpatialData source."
+                    "[XENIUM] No cell/nucleus shapes found in the built"
+                    " SpatialData source."
                 )
         else:
             xenium_dir = original_path

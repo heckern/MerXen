@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +180,7 @@ def _load_dataset_sdata(
 def _write_progress(path: Path, data: dict) -> None:
     """Write progress JSON; best-effort, never raises."""
     try:
-        data["updated_at"] = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        data["updated_at"] = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         path.write_text(json.dumps(data, indent=2))
     except Exception:  # noqa: BLE001
         pass
@@ -204,12 +204,15 @@ def run_segmentation_pipeline(
     _started_at = time.monotonic()
 
     def _progress(stage: str, **extra: object) -> None:
-        _write_progress(progress_path, {
-            "dataset": dataset.name,
-            "stage": stage,
-            "elapsed_min": round((time.monotonic() - _started_at) / 60, 1),
-            **extra,
-        })
+        _write_progress(
+            progress_path,
+            {
+                "dataset": dataset.name,
+                "stage": stage,
+                "elapsed_min": round((time.monotonic() - _started_at) / 60, 1),
+                **extra,
+            },
+        )
 
     if latest_output.exists() and not force_rerun:
         log_status(f"[{dataset.name}] Reusing existing latest output: {latest_output}")
