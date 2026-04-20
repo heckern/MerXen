@@ -24,6 +24,7 @@ from tqdm.auto import tqdm
 
 from merxen.config import EnrichmentConfig
 from merxen.io.image_source import _get_image_dataarray, list_plane_keys
+from merxen.io.spatialdata_io import write_spatialdata_zarr
 from merxen.memory import force_release, log_status
 from merxen.segmentation.cellpose import build_cellpose_affine_to_microns
 from merxen.segmentation.mask_geometry import masks_to_polygons
@@ -295,13 +296,23 @@ def _cellpose_gdf_from_mask(
 
 def _load_merscope_transform(config: EnrichmentConfig) -> np.ndarray:
     """Load MERSCOPE transform matrix from config."""
-    if config.transform_path is None:
-        raise ValueError("MERSCOPE enrichment requires transform_path.")
-    if not Path(config.transform_path).exists():
-        raise FileNotFoundError(
-            f"MERSCOPE transform file not found: {config.transform_path}"
-        )
-    return np.loadtxt(config.transform_path)
+    candidates: list[Path] = []
+    if config.transform_path is not None:
+        candidates.append(Path(config.transform_path))
+    candidates.append(
+        Path(config.original_data_path) / "micron_to_mosaic_pixel_transform.csv"
+    )
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        matrix = np.loadtxt(candidate)
+        if matrix.shape == (3, 3):
+            return matrix
+
+    raise FileNotFoundError(
+        "Could not determine MERSCOPE transform from transform_path/original_data_path."
+    )
 
 
 def _find_xenium_pixel_size(config: EnrichmentConfig) -> float:
@@ -397,6 +408,52 @@ def _load_original_source(config: EnrichmentConfig) -> Any:
         )
 
     return sd.read_zarr(original_path)
+
+
+def _copy_xenium_shapes_from_sdata(
+    dst_sdata: Any,
+    src_sdata: Any,
+    *,
+    force: bool,
+) -> int:
+    """Copy Xenium cell and nucleus boundary layers from a built SpatialData source."""
+    copied = 0
+    cell_key = _find_first_existing_key(
+        src_sdata.shapes,
+        ["cell_boundaries", "xenium_cell_boundaries"],
+    )
+    if cell_key is not None:
+        copied += int(
+            _set_element(
+                dst_sdata.shapes,
+                XENIUM_OLD_CELL_SHAPE_NAME,
+                src_sdata.shapes[cell_key].copy(),
+                force=force,
+            )
+        )
+
+    nucleus_key = _find_first_existing_key(
+        src_sdata.shapes,
+        ["nucleus_boundaries", "xenium_nucleus"],
+    )
+    if nucleus_key is not None:
+        copied += int(
+            _set_element(
+                dst_sdata.shapes,
+                XENIUM_OLD_NUCLEUS_SHAPE_NAME,
+                src_sdata.shapes[nucleus_key].copy(),
+                force=force,
+            )
+        )
+    return copied
+
+
+def _find_first_existing_key(mapping: Any, candidates: list[str]) -> str | None:
+    """Return the first candidate key present in a SpatialData mapping."""
+    for candidate in candidates:
+        if candidate in mapping:
+            return candidate
+    return None
 
 
 def _copy_merscope_images(
@@ -568,35 +625,47 @@ def enrich_single_latest(
             log_status("[MERSCOPE] WARNING: original source has no tables.")
 
     elif platform == "XENIUM":
-        xenium_dir = Path(config.original_data_path)
-        cell_gdf = _load_xenium_boundary_shapes_from_csv(xenium_dir, which="cell")
-        if len(cell_gdf) == 0:
-            raise RuntimeError(
-                "[XENIUM] No cell boundaries parsed from cell_boundaries.csv.gz"
+        original_path = Path(config.original_data_path)
+        if original_path.suffix == ".zarr":
+            copied_shapes = _copy_xenium_shapes_from_sdata(
+                dst,
+                src,
+                force=force_rerun,
             )
-        cell_shapes = _parse_shapes_with_template(
-            cell_gdf,
-            template_shape=proseg_template,
-        )
-        _set_element(
-            dst.shapes,
-            XENIUM_OLD_CELL_SHAPE_NAME,
-            cell_shapes,
-            force=force_rerun,
-        )
-
-        nuc_gdf = _load_xenium_boundary_shapes_from_csv(xenium_dir, which="nucleus")
-        if len(nuc_gdf) > 0:
-            nuc_shapes = _parse_shapes_with_template(
-                nuc_gdf,
+            if copied_shapes == 0:
+                raise RuntimeError(
+                    "[XENIUM] No cell/nucleus shapes found in the built SpatialData source."
+                )
+        else:
+            xenium_dir = original_path
+            cell_gdf = _load_xenium_boundary_shapes_from_csv(xenium_dir, which="cell")
+            if len(cell_gdf) == 0:
+                raise RuntimeError(
+                    "[XENIUM] No cell boundaries parsed from cell_boundaries.csv.gz"
+                )
+            cell_shapes = _parse_shapes_with_template(
+                cell_gdf,
                 template_shape=proseg_template,
             )
             _set_element(
                 dst.shapes,
-                XENIUM_OLD_NUCLEUS_SHAPE_NAME,
-                nuc_shapes,
+                XENIUM_OLD_CELL_SHAPE_NAME,
+                cell_shapes,
                 force=force_rerun,
             )
+
+            nuc_gdf = _load_xenium_boundary_shapes_from_csv(xenium_dir, which="nucleus")
+            if len(nuc_gdf) > 0:
+                nuc_shapes = _parse_shapes_with_template(
+                    nuc_gdf,
+                    template_shape=proseg_template,
+                )
+                _set_element(
+                    dst.shapes,
+                    XENIUM_OLD_NUCLEUS_SHAPE_NAME,
+                    nuc_shapes,
+                    force=force_rerun,
+                )
 
         added = _copy_xenium_images(dst, src, force=force_rerun)
         log_status(f"[XENIUM] Added/updated {added} image entries")
@@ -622,7 +691,7 @@ def enrich_single_latest(
         shutil.rmtree(tmp_out)
 
     log_status(f"[{dataset_name}] Writing enriched zarr to temp path: {tmp_out}")
-    dst.write(tmp_out, overwrite=True)
+    write_spatialdata_zarr(dst, tmp_out, overwrite=True)
 
     del dst, src, cp_gdf
     force_release(note=f"after writing enriched temp zarr ({dataset_name})")

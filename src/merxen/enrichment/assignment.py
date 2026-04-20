@@ -17,6 +17,7 @@ from scipy import sparse
 from spatialdata.models import TableModel
 from tqdm.auto import tqdm
 
+from merxen.io.spatialdata_io import write_spatialdata_zarr
 from merxen.io.transcript_io import first_existing_col, iter_points_chunks
 from merxen.memory import enforce_memory_limit, force_release, log_status
 
@@ -423,7 +424,7 @@ def run_per_shape_assignment_for_dataset(
 
     if wrote_any:
         if not hasattr(sdata_obj, "write_element"):
-            sdata_obj.write(latest_path, overwrite=True)
+            write_spatialdata_zarr(sdata_obj, latest_path, overwrite=True)
         force_release(note=f"after per-shape table writes ({dataset_name})")
         log_status(
             f"[{dataset_name}] Per-shape assignment tables written to: {latest_path}"
