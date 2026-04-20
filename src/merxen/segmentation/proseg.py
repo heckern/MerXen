@@ -8,6 +8,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -92,6 +93,9 @@ def _to_optional_path_array(
     return out_path
 
 
+_PROSEG_ITER_RE = re.compile(r"[Ii]ter(?:ation)?\s*[:\s]\s*(\d+)(?:\s*/\s*(\d+))?")
+
+
 def run_proseg_refinement(
     transcripts_df: pd.DataFrame | str | Path,
     output_path: str | Path,
@@ -122,6 +126,8 @@ def run_proseg_refinement(
     num_threads: int = 12,
     overwrite: bool = True,
     logger: logging.Logger | None = None,
+    progress_callback: Any = None,
+    proseg_samples: int | None = None,
 ) -> Path:
     """Run ProSeg refinement on transcript data.
 
@@ -340,6 +346,18 @@ def run_proseg_refinement(
                 continue
             streamed_lines.append(line)
             log.info("[proseg] %s", line)
+            if progress_callback is not None:
+                m = _PROSEG_ITER_RE.search(line)
+                if m:
+                    done = int(m.group(1))
+                    total = int(m.group(2)) if m.group(2) else proseg_samples
+                    pct = round(100 * done / total, 1) if total else None
+                    progress_callback(
+                        "proseg_sampling",
+                        samples_done=done,
+                        samples_total=total,
+                        pct=pct,
+                    )
 
         return_code = process.wait()
         if return_code != 0:

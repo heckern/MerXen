@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +177,15 @@ def _load_dataset_sdata(
     raise ValueError(f"Unsupported platform: {dataset.platform}")
 
 
+def _write_progress(path: Path, data: dict) -> None:
+    """Write progress JSON; best-effort, never raises."""
+    try:
+        data["updated_at"] = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        path.write_text(json.dumps(data, indent=2))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_segmentation_pipeline(
     config: SegmentationConfig,
     *,
@@ -189,6 +200,16 @@ def run_segmentation_pipeline(
     latest_output = out_dir / "proseg_base_latest.zarr"
     transcripts_csv = out_dir / "transcripts_for_proseg.csv"
     mask_path = out_dir / "cellpose_masks_tiled.npy"
+    progress_path = out_dir / "progress.json"
+    _started_at = time.monotonic()
+
+    def _progress(stage: str, **extra: object) -> None:
+        _write_progress(progress_path, {
+            "dataset": dataset.name,
+            "stage": stage,
+            "elapsed_min": round((time.monotonic() - _started_at) / 60, 1),
+            **extra,
+        })
 
     if latest_output.exists() and not force_rerun:
         log_status(f"[{dataset.name}] Reusing existing latest output: {latest_output}")
@@ -212,6 +233,7 @@ def run_segmentation_pipeline(
         config
     )
 
+    _progress("cellpose_starting")
     mask_path = run_tiled_cellpose(
         fetch_tile_fn=fetch_tile_fn,
         height=height,
@@ -222,7 +244,9 @@ def run_segmentation_pipeline(
         mask_filter_config=config.mask_filter,
         tiling_config=config.tiling,
         memory_config=config.memory,
+        progress_callback=_progress,
     )
+    _progress("cellpose_done")
 
     x_transform, y_transform = build_cellpose_affine_to_microns(
         matrix,
@@ -278,6 +302,7 @@ def run_segmentation_pipeline(
     del mask_mmap, points_obj, sdata
     force_release(note=f"after {dataset.name} preprocessing, before ProSeg")
 
+    _progress("proseg_starting")
     proseg_params = config.proseg.model_dump()
     proseg_params.update(dataset.proseg_overrides)
 
@@ -311,11 +336,14 @@ def run_segmentation_pipeline(
         cellpose_y_transform=y_transform,
         num_threads=int(proseg_params.get("num_threads", 12)),
         overwrite=True,
+        progress_callback=_progress,
+        proseg_samples=int(proseg_params["samples"]),
     )
 
     latest_out = convert_to_latest_zarr(raw_out, latest_output)
     log_status(f"[{dataset.name}] Wrote latest output: {latest_out}")
     force_release(note=f"after {dataset.name} full segmentation run")
+    _progress("done")
 
     return {
         "raw_output": Path(raw_out),

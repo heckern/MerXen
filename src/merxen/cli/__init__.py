@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import sys
+
 import click
 
 from merxen.cli.run_build_spatialdata import build_spatialdata_command
@@ -15,6 +18,13 @@ from merxen.cli.run_visualization import visualize_command
 @click.group(name="merxen")
 def main() -> None:
     """MerXen spatial transcriptomics pipeline CLI."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+        force=True,
+    )
 
 
 main.add_command(build_spatialdata_command)

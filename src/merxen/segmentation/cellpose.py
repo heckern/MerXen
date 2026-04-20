@@ -262,6 +262,7 @@ def run_tiled_cellpose(
     mask_filter_config: MaskFilterConfig,
     tiling_config: TilingConfig,
     memory_config: MemoryConfig,
+    progress_callback: Any = None,
 ) -> Path:
     """Run tiled Cellpose segmentation across a full image.
 
@@ -380,6 +381,14 @@ def run_tiled_cellpose(
                 f"[{dataset_name}] tile {i}/{len(tiles)} complete; "
                 f"accumulated labels={total_new_labels:,}"
             )
+            if progress_callback is not None:
+                progress_callback(
+                    "cellpose_tiling",
+                    tiles_done=i,
+                    tiles_total=len(tiles),
+                    pct=round(100 * i / len(tiles), 1),
+                    labels_found=total_new_labels,
+                )
 
         del tile, img_seg, masks, flows, styles, core, core_global
         clear_cuda_cache()
