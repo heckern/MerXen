@@ -1,0 +1,149 @@
+# Configuration
+
+MerXen configuration lives in three places:
+
+1. **Shell environment** — a `.env` file for absolute paths and machine limits.
+2. **Nextflow parameters** — defaults in
+   [workflows/nextflow.config](../workflows/nextflow.config), overridable per
+   run with `--<name>`.
+3. **Pydantic models** — [src/merxen/config.py](../src/merxen/config.py) — the
+   authoritative schema every CLI command validates its JSON config against.
+
+## Environment variables
+
+Copy the template and fill in values:
+
+```bash
+cp .env.example .env
+```
+
+Variables, from [.env.example](../.env.example):
+
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `PROSEG_BINARY` | — | Passed in to the Nextflow `--proseg_binary` flag; referenced by `ProsegConfig.binary_path`. |
+| `MERXEN_OUTPUT_ROOT` | `./results` | `PipelineConfig.output_root`. Not consumed directly by the pipeline today — Nextflow's `--outdir` is authoritative — but available to Python code that imports `PipelineConfig()`. |
+| `MERXEN_MAX_RAM_GB` | `600.0` | `PipelineConfig.max_ram_gb`. Mirrored into the Nextflow `max_ram_gb` param. |
+
+The `MERXEN_` prefix is wired up via `model_config = {"env_prefix": "MERXEN_"}`
+in [config.py:202](../src/merxen/config.py#L202).
+
+## Nextflow parameters
+
+Defaults in [workflows/nextflow.config](../workflows/nextflow.config). Override
+any of them with `--<name>` on the command line.
+
+### Required
+
+| Param | Description |
+|-------|-------------|
+| `samplesheet` | Path to the samplesheet CSV. |
+| `proseg_binary` | Path to the ProSeg binary. |
+
+### General
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `outdir` | `./results` | Output root. |
+| `force_spatialdata_build` | `false` | Rebuild SpatialData zarrs even if cached. |
+
+### Cellpose
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `cellpose_model_type` | `cyto3` | Cellpose model preset. |
+| `cellpose_gpu` | `true` | Use GPU for inference. |
+| `cellpose_diameter` | `null` | Cell diameter (px). `null` → Cellpose auto-estimates. |
+| `cellpose_flow_threshold` | `0.8` | Cellpose flow threshold. |
+| `cellpose_cellprob` | `-5.0` | Cellpose cell probability threshold. |
+| `cellpose_tile_overlap` | `0.15` | Fractional overlap between core tiles. |
+| `cellpose_bsize` | `256` | Cellpose internal batch block size. |
+
+### ProSeg
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `proseg_samples` | `1200` | MCMC samples. |
+| `proseg_voxel_size` | `0.5` | Voxel size (µm). |
+| `proseg_burnin_voxel_size` | `1.0` | Burn-in voxel size (µm). |
+| `proseg_nuclear_reassignment_prob` | `0.25` | Nuclear reassignment probability. |
+| `proseg_diffusion_probability` | `0.25` | Diffusion probability. |
+| `proseg_cell_compactness` | `0.04` | Cell compactness prior. |
+| `proseg_num_threads` | `75` | ProSeg thread count. |
+| `default_merscope_voxel_layers` | `7` | Fallback when samplesheet column is empty. |
+| `default_xenium_voxel_layers` | `2` | Fallback when samplesheet column is empty. |
+
+### Platform-specific
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `xenium_min_qv` | `20.0` | Minimum transcript QV to retain. |
+
+### Resource limits
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `max_ram_gb` | `600` | System memory limit passed to `MemoryConfig`. |
+| `warn_ram_gb` | `560` | RAM warning threshold. |
+| `transcript_chunk_rows` | `1_000_000` | Points chunk size when streaming transcripts. |
+
+The same values are enforced at the executor level:
+
+```groovy
+executor {
+    name = "local"
+    cpus = 75
+    memory = "600 GB"
+}
+```
+
+Per-process CPU/memory requests ([nextflow.config:42-69](../workflows/nextflow.config#L42-L69)):
+
+| Process | CPUs | Memory |
+|---------|-----:|-------:|
+| `BUILD_SPATIALDATA` | 8 | 200 GB |
+| `SEGMENT` | 75 | 500 GB |
+| `ENRICH` | 16 | 200 GB |
+| `QC` | 8 | 100 GB |
+| `COMPARE` | 8 | 200 GB |
+| `VISUALIZE` | 8 | 200 GB |
+
+## Pydantic config models
+
+Every CLI subcommand takes `--config <path>.json` and validates the JSON
+against a Pydantic model. Adding, removing, or renaming fields in these
+models is the ground truth for how stages are configured.
+
+| Model | Stage | File |
+|-------|-------|------|
+| `SpatialDataBuildConfig` | `build-spatialdata` | [config.py:112](../src/merxen/config.py#L112) |
+| `SegmentationConfig` | `segment` | [config.py:146](../src/merxen/config.py#L146) |
+| `EnrichmentConfig` | `enrich` | [config.py:157](../src/merxen/config.py#L157) |
+| `QCConfig` | `qc` | [config.py:169](../src/merxen/config.py#L169) |
+| `ComparisonConfig` | `compare` | [config.py:177](../src/merxen/config.py#L177) |
+| `VisualizationConfig` | `visualize` | [config.py:186](../src/merxen/config.py#L186) |
+
+Nested sub-models:
+
+- `CellposeConfig`, `TilingConfig`, `MaskFilterConfig` — Cellpose behaviour.
+- `ProsegConfig` — ProSeg parameters, including `binary_path`.
+- `MemoryConfig` — memory limits and chunk sizes.
+- `DatasetConfig` — one dataset (one half of a pair) within a `SegmentationConfig`.
+- `MerscopeBuildConfig` / `XeniumBuildConfig` — platform-specific build options
+  nested under `SpatialDataBuildConfig`.
+- `PipelineConfig(BaseSettings)` — top-level, loaded from `MERXEN_*` env vars.
+
+`load_config_from_json(path, cls)` in
+[config.py:205](../src/merxen/config.py#L205) is the helper every CLI entry
+point uses to parse and validate.
+
+## Precedence
+
+1. CLI flags passed to `nextflow run` override `nextflow.config` defaults.
+2. `nextflow.config` defaults populate the JSON config written into the work
+   directory.
+3. The Python stage loads that JSON, validated through the Pydantic model.
+4. `MERXEN_*` environment variables only affect code that instantiates
+   `PipelineConfig()` directly — they do **not** back-propagate into
+   `nextflow.config`. Set them explicitly via `--<name>` if you need them in
+   Nextflow.
