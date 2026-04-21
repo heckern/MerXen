@@ -1,7 +1,7 @@
 process BUILD_SPATIALDATA {
     tag "${pair_id}:${platform}"
 
-    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/spatialdata" }, mode: "copy", overwrite: true
+    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/spatialdata" }, mode: "symlink", overwrite: true
 
     input:
     tuple val(key), val(pair_id), val(platform), val(build_config_json)

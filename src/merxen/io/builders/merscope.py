@@ -8,7 +8,7 @@ import shutil
 import warnings
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anndata
 import dask.dataframe as dd
@@ -339,7 +339,7 @@ def _parse_transcript_table(
 
     transcripts = PointsModel.parse(ddf, **parse_kwargs)
     transcripts["gene"] = transcripts["gene"].astype("category")
-    return transcripts
+    return cast(dd.DataFrame, transcripts)
 
 
 def _rioxarray_load_merscope(
