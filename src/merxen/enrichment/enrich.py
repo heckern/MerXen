@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,7 @@ from merxen.config import EnrichmentConfig
 from merxen.io.image_source import _get_image_dataarray, list_plane_keys
 from merxen.io.spatialdata_io import write_spatialdata_zarr
 from merxen.memory import force_release, log_status
+from merxen.path_utils import remove_path, stage_existing_output
 from merxen.segmentation.cellpose import build_cellpose_affine_to_microns
 from merxen.segmentation.mask_geometry import masks_to_polygons
 
@@ -61,12 +61,7 @@ def _set_element(mapping: Any, key: str, value: Any, *, force: bool = False) -> 
 
 def _remove_path(path: Path) -> None:
     """Remove a file, symlink, or directory tree if it exists."""
-    if not path.exists() and not path.is_symlink():
-        return
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-        return
-    shutil.rmtree(path)
+    remove_path(path)
 
 
 def _to_cyx(image_like: Any) -> Any:
@@ -491,11 +486,17 @@ def _copy_merscope_images(
         )
 
     if len(plane_keys) > 0:
-        log_status(
-            f"[MERSCOPE] Building lazy z-projection from {len(plane_keys)} planes"
-        )
-        plane_arrays = [_to_cyx(src_sdata.images[k]) for k in plane_keys]
-        projection = xr.concat(plane_arrays, dim="z").max(dim="z", keep_attrs=True)
+        if len(plane_keys) == 1:
+            projection = _to_cyx(src_sdata.images[plane_keys[0]])
+        else:
+            log_status(
+                f"[MERSCOPE] Building lazy z-projection from {len(plane_keys)} planes"
+            )
+            plane_arrays = [_to_cyx(src_sdata.images[k]) for k in plane_keys]
+            projection = xr.concat(plane_arrays, dim="z").max(
+                dim="z",
+                keep_attrs=True,
+            )
         copied += int(
             _set_element(
                 dst_sdata.images,
@@ -522,11 +523,11 @@ def _copy_xenium_images(dst_sdata: Any, src_sdata: Any, *, force: bool) -> int:
     return copied
 
 
-def _is_already_enriched(dst_sdata: Any, dataset_name: str) -> bool:
+def _is_already_enriched(dst_sdata: Any, platform: str) -> bool:
     """Check whether required enrichment artifacts already exist."""
     req_shapes = {MOSAIK_PROSEG_SHAPE_NAME, MOSAIK_CELLPOSE_SHAPE_NAME}
     req_tables = {ORIGINAL_TABLE_NAME}
-    if dataset_name.upper() == "MERSCOPE":
+    if platform.upper() == "MERSCOPE":
         req_shapes.add(MERSCOPE_OLD_SHAPE_NAME)
         req_images = {MERSCOPE_ZPROJ_IMAGE_NAME}
     else:
@@ -548,6 +549,11 @@ def enrich_single_latest(
 ) -> Path:
     """Enrich latest ProSeg output with explicit shape/image/table layers."""
     latest_path = Path(config.latest_zarr_path)
+    target_path = (
+        Path(config.persistent_output_path)
+        if config.persistent_output_path is not None
+        else latest_path
+    )
     mask_path = Path(config.mask_path)
     dataset_name = str(config.dataset_name).upper()
     platform = config.platform.upper()
@@ -560,11 +566,13 @@ def enrich_single_latest(
     log_status(f"[{dataset_name}] Loading latest zarr for enrichment: {latest_path}")
     dst = sd.read_zarr(latest_path)
 
-    if _is_already_enriched(dst, dataset_name) and (not force_rerun):
+    if _is_already_enriched(dst, platform) and (not force_rerun):
         log_status(f"[{dataset_name}] Already enriched; skipping.")
         del dst
         force_release(note=f"after enrichment skip {dataset_name}")
-        return latest_path
+        if latest_path != target_path and target_path.exists():
+            stage_existing_output(target_path, latest_path)
+        return target_path
 
     # 1. Ensure explicit MOSAIK_proseg layer exists.
     proseg_src_key = None
@@ -696,8 +704,9 @@ def enrich_single_latest(
         raise ValueError(f"Unsupported platform: {config.platform}")
 
     # 4. Safe write + atomic replace.
-    tmp_out = latest_path.parent / f"{latest_path.stem}__enrich_tmp.zarr"
-    backup_out = latest_path.parent / f"{latest_path.stem}__pre_enrich_backup.zarr"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_out = target_path.parent / f"{target_path.stem}__enrich_tmp.zarr"
+    backup_out = target_path.parent / f"{target_path.stem}__pre_enrich_backup.zarr"
     _remove_path(tmp_out)
 
     log_status(f"[{dataset_name}] Writing enriched zarr to temp path: {tmp_out}")
@@ -708,12 +717,14 @@ def enrich_single_latest(
 
     if keep_backup:
         _remove_path(backup_out)
-        if latest_path.exists() or latest_path.is_symlink():
-            shutil.move(str(latest_path), str(backup_out))
+        if target_path.exists() or target_path.is_symlink():
+            target_path.replace(backup_out)
             log_status(f"[{dataset_name}] Backup saved: {backup_out}")
-    elif latest_path.exists() or latest_path.is_symlink():
-        _remove_path(latest_path)
+    elif target_path.exists() or target_path.is_symlink():
+        _remove_path(target_path)
 
-    shutil.move(str(tmp_out), str(latest_path))
-    log_status(f"[{dataset_name}] Enrichment complete: {latest_path}")
-    return latest_path
+    tmp_out.replace(target_path)
+    if latest_path != target_path:
+        stage_existing_output(target_path, latest_path)
+    log_status(f"[{dataset_name}] Enrichment complete: {target_path}")
+    return target_path

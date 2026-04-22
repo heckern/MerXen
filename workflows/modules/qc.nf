@@ -1,7 +1,7 @@
 process QC {
     tag "${pair_id}:${platform}"
 
-    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/qc" }, mode: "copy", overwrite: true
+    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/qc" }, mode: "symlink", overwrite: true
 
     input:
     tuple val(key), val(pair_id), val(platform), path(latest_zarr)

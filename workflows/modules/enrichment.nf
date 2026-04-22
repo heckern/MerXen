@@ -1,7 +1,7 @@
 process ENRICH {
     tag "${pair_id}:${platform}"
 
-    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/enrichment" }, mode: "copy", overwrite: true
+    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/enrichment" }, mode: "symlink", overwrite: true
 
     input:
     tuple val(key), val(pair_id), val(platform), val(enrich_config_json), path(latest_zarr), path(mask_path)

@@ -183,6 +183,15 @@ workflow {
     segment_inputs_ch = build_results_ch
         .join(segment_meta_ch)
         .map { key, pairId, platform, sourceSpatialdata, meta ->
+            def persistentLatestZarrPath = file(
+                "${params.outdir}/${pairId}/${platform.toLowerCase()}/latest/latest_spatialdata.zarr"
+            ).toAbsolutePath().toString()
+            def persistentMaskPath = file(
+                "${params.outdir}/${pairId}/${platform.toLowerCase()}/segmentation/cellpose_masks_tiled.npy"
+            ).toAbsolutePath().toString()
+            def persistentTranscriptsPath = file(
+                "${params.outdir}/${pairId}/${platform.toLowerCase()}/segmentation/transcripts_for_proseg.csv"
+            ).toAbsolutePath().toString()
             def baseConfig = [
                 cellpose: [
                     model_type: params.cellpose_model_type,
@@ -219,6 +228,9 @@ workflow {
                     data_path: sourceSpatialdata.toString(),
                     channels: meta.channels,
                     output_dir: "segment_out",
+                    persistent_latest_zarr_path: persistentLatestZarrPath,
+                    persistent_mask_path: persistentMaskPath,
+                    persistent_transcripts_path: persistentTranscriptsPath,
                     image_prefix: meta.image_prefix,
                     z_range: meta.z_range,
                     transform_path: meta.transform_path,
@@ -249,6 +261,10 @@ workflow {
                 error "Internal channel mismatch for key=${key}: ${pairId}/${platform} vs ${pairMeta}/${platformMeta}"
             }
 
+            def persistentLatestZarrPath = file(
+                "${params.outdir}/${pairId}/${platform.toLowerCase()}/latest/latest_spatialdata.zarr"
+            ).toAbsolutePath().toString()
+
             def enrichConfig = [
                 dataset_name: "${pairId}_${platform}",
                 platform: platform,
@@ -256,6 +272,7 @@ workflow {
                 mask_path: "enrich_input_mask.npy",
                 original_data_path: originalDataPath,
                 output_dir: "enrich_out",
+                persistent_output_path: persistentLatestZarrPath,
                 transform_path: null,
             ]
 

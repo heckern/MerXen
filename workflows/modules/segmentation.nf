@@ -1,7 +1,7 @@
 process SEGMENT {
     tag "${pair_id}:${platform}"
 
-    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/segmentation" }, mode: "copy", overwrite: true
+    publishDir { "${params.outdir}/${pair_id}/${platform.toLowerCase()}/segmentation" }, mode: "symlink", overwrite: true
 
     input:
     tuple val(key), val(pair_id), val(platform), val(seg_config_json)

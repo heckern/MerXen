@@ -27,7 +27,7 @@ class CellposeConfig(BaseModel):
 
     @field_validator("factor_rescale")
     @classmethod
-    def _validate_rescale(cls, v: float) -> float:
+    def _validate_rescale(cls: type[CellposeConfig], v: float) -> float:
         if abs(v - 1.0) > 1e-12:
             msg = (
                 "MerXen is configured for native-resolution tiled Cellpose only. "
@@ -131,6 +131,9 @@ class DatasetConfig(BaseModel):
     data_path: Path
     channels: list[str]
     output_dir: Path
+    persistent_latest_zarr_path: Path | None = None
+    persistent_mask_path: Path | None = None
+    persistent_transcripts_path: Path | None = None
 
     # MERSCOPE-specific
     image_prefix: str | None = None
@@ -163,6 +166,7 @@ class EnrichmentConfig(BaseModel):
     mask_path: Path
     original_data_path: Path
     output_dir: Path
+    persistent_output_path: Path | None = None
     transform_path: Path | None = None
 
 

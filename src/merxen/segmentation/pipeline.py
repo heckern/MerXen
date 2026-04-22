@@ -24,6 +24,7 @@ from merxen.io.image_source import (
 from merxen.io.spatialdata_io import convert_to_latest_zarr
 from merxen.io.transcript_io import resolve_col, write_proseg_csv_from_points
 from merxen.memory import force_release, log_status
+from merxen.path_utils import remove_path, stage_existing_output
 from merxen.segmentation.cellpose import (
     build_cellpose_affine_to_microns,
     run_tiled_cellpose,
@@ -197,11 +198,38 @@ def run_segmentation_pipeline(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     raw_output = out_dir / "proseg_base_raw.zarr"
-    latest_output = out_dir / "proseg_base_latest.zarr"
-    transcripts_csv = out_dir / "transcripts_for_proseg.csv"
-    mask_path = out_dir / "cellpose_masks_tiled.npy"
+    staged_latest_output = out_dir / "proseg_base_latest.zarr"
+    staged_transcripts_csv = out_dir / "transcripts_for_proseg.csv"
+    staged_mask_path = out_dir / "cellpose_masks_tiled.npy"
+    persistent_latest_output = (
+        Path(dataset.persistent_latest_zarr_path)
+        if dataset.persistent_latest_zarr_path is not None
+        else None
+    )
+    persistent_transcripts_csv = (
+        Path(dataset.persistent_transcripts_path)
+        if dataset.persistent_transcripts_path is not None
+        else None
+    )
+    persistent_mask_path = (
+        Path(dataset.persistent_mask_path)
+        if dataset.persistent_mask_path is not None
+        else None
+    )
+    latest_output = persistent_latest_output or staged_latest_output
+    transcripts_csv = persistent_transcripts_csv or staged_transcripts_csv
+    mask_path = persistent_mask_path or staged_mask_path
     progress_path = out_dir / "progress.json"
     _started_at = time.monotonic()
+
+    def _stage_outputs() -> tuple[Path, Path, Path]:
+        if latest_output != staged_latest_output:
+            stage_existing_output(latest_output, staged_latest_output)
+        if transcripts_csv != staged_transcripts_csv:
+            stage_existing_output(transcripts_csv, staged_transcripts_csv)
+        if mask_path != staged_mask_path:
+            stage_existing_output(mask_path, staged_mask_path)
+        return staged_latest_output, staged_transcripts_csv, staged_mask_path
 
     def _progress(stage: str, **extra: object) -> None:
         _write_progress(
@@ -214,22 +242,29 @@ def run_segmentation_pipeline(
             },
         )
 
-    if latest_output.exists() and not force_rerun:
+    if (
+        latest_output.exists()
+        and transcripts_csv.exists()
+        and mask_path.exists()
+        and not force_rerun
+    ):
         log_status(f"[{dataset.name}] Reusing existing latest output: {latest_output}")
+        staged_out, staged_transcripts, staged_mask = _stage_outputs()
         return {
-            "raw_output": raw_output,
-            "latest_output": latest_output,
-            "transcripts_csv": transcripts_csv,
-            "cellpose_mask_path": mask_path,
+            "latest_output": staged_out,
+            "transcripts_csv": staged_transcripts,
+            "cellpose_mask_path": staged_mask,
         }
 
     if raw_output.exists() and not force_rerun:
+        latest_output.parent.mkdir(parents=True, exist_ok=True)
         latest_out = convert_to_latest_zarr(raw_output, latest_output)
+        remove_path(raw_output)
+        staged_out, staged_transcripts, staged_mask = _stage_outputs()
         return {
-            "raw_output": raw_output,
-            "latest_output": Path(latest_out),
-            "transcripts_csv": transcripts_csv,
-            "cellpose_mask_path": mask_path,
+            "latest_output": Path(staged_out),
+            "transcripts_csv": Path(staged_transcripts),
+            "cellpose_mask_path": Path(staged_mask),
         }
 
     sdata, fetch_tile_fn, height, width, matrix, points_obj = _load_dataset_sdata(
@@ -237,6 +272,7 @@ def run_segmentation_pipeline(
     )
 
     _progress("cellpose_starting")
+    mask_path.parent.mkdir(parents=True, exist_ok=True)
     mask_path = run_tiled_cellpose(
         fetch_tile_fn=fetch_tile_fn,
         height=height,
@@ -277,6 +313,7 @@ def run_segmentation_pipeline(
         )
         min_qv = dataset.min_qv
 
+    transcripts_csv.parent.mkdir(parents=True, exist_ok=True)
     mask_mmap = np.load(mask_path, mmap_mode="r")
     prep_stats = write_proseg_csv_from_points(
         points_obj=points_obj,
@@ -343,14 +380,16 @@ def run_segmentation_pipeline(
         proseg_samples=int(proseg_params["samples"]),
     )
 
+    latest_output.parent.mkdir(parents=True, exist_ok=True)
     latest_out = convert_to_latest_zarr(raw_out, latest_output)
+    remove_path(raw_out)
+    staged_out, staged_transcripts, staged_mask = _stage_outputs()
     log_status(f"[{dataset.name}] Wrote latest output: {latest_out}")
     force_release(note=f"after {dataset.name} full segmentation run")
     _progress("done")
 
     return {
-        "raw_output": Path(raw_out),
-        "latest_output": Path(latest_out),
-        "transcripts_csv": transcripts_csv,
-        "cellpose_mask_path": mask_path,
+        "latest_output": Path(staged_out),
+        "transcripts_csv": Path(staged_transcripts),
+        "cellpose_mask_path": Path(staged_mask),
     }

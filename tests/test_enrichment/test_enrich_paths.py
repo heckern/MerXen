@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from merxen.enrichment.enrich import _remove_path
+from merxen.enrichment.enrich import (
+    MERSCOPE_OLD_SHAPE_NAME,
+    MERSCOPE_ZPROJ_IMAGE_NAME,
+    MOSAIK_CELLPOSE_SHAPE_NAME,
+    MOSAIK_PROSEG_SHAPE_NAME,
+    ORIGINAL_TABLE_NAME,
+    _is_already_enriched,
+    _remove_path,
+)
 
 
 def test_remove_path_unlinks_directory_symlink_without_touching_target(
@@ -35,3 +44,22 @@ def test_remove_path_deletes_real_directory_tree(tmp_path: Path) -> None:
     _remove_path(out_dir)
 
     assert not out_dir.exists()
+
+
+def test_is_already_enriched_checks_platform_specific_merscope_layers() -> None:
+    """MERSCOPE completeness should depend on platform-specific shapes/images."""
+    sdata = SimpleNamespace(
+        shapes={
+            MOSAIK_PROSEG_SHAPE_NAME: object(),
+            MOSAIK_CELLPOSE_SHAPE_NAME: object(),
+            MERSCOPE_OLD_SHAPE_NAME: object(),
+        },
+        tables={ORIGINAL_TABLE_NAME: object()},
+        images={MERSCOPE_ZPROJ_IMAGE_NAME: object()},
+    )
+
+    assert _is_already_enriched(sdata, "MERSCOPE")
+
+    del sdata.images[MERSCOPE_ZPROJ_IMAGE_NAME]
+
+    assert not _is_already_enriched(sdata, "MERSCOPE")

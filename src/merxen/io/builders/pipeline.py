@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 
 from merxen.config import SpatialDataBuildConfig
+from merxen.path_utils import remove_path, stage_existing_output
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,8 @@ def build_spatialdata_artifact(
 
     target_path = persistent_output_path or output_path
     if target_path != output_path:
-        _remove_path(output_path)
-    _remove_path(target_path)
+        remove_path(output_path)
+    remove_path(target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     platform = config.platform.upper()
@@ -105,7 +105,7 @@ def build_spatialdata_artifact(
         raise ValueError(f"Unsupported platform: {config.platform}")
 
     if target_path != output_path:
-        _stage_existing_output(target_path, output_path)
+        stage_existing_output(target_path, output_path)
         return output_path
     return target_path
 
@@ -137,25 +137,9 @@ def _resolve_raw_input_path(input_path: Path) -> Path | None:
 
 def _stage_existing_output(source_path: Path, output_path: Path) -> None:
     """Create a local staged view of an existing SpatialData zarr."""
-    output_path = Path(output_path)
-    source_path = Path(source_path)
-    if output_path == source_path:
-        return
-
-    _remove_path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        output_path.symlink_to(source_path, target_is_directory=True)
-    except OSError:
-        shutil.copytree(source_path, output_path, symlinks=True)
+    stage_existing_output(source_path, output_path)
 
 
 def _remove_path(path: Path) -> None:
     """Remove a file, symlink, or directory if it exists."""
-    path = Path(path)
-    if not path.exists() and not path.is_symlink():
-        return
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    else:
-        shutil.rmtree(path)
+    remove_path(path)
