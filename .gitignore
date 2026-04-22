@@ -17,6 +17,10 @@ run_logs/
 results
 results/
 
+# Workflow samplesheets
+workflows/*.csv
+!workflows/samplesheet.example.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -224,6 +228,3 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-
-# Real samplesheets (non-example)
-workflows/samplesheet.p7113_p7513.csv
