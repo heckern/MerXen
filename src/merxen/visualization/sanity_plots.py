@@ -43,7 +43,7 @@ def _normalize_channel(arr: np.ndarray) -> np.ndarray:
     lo, hi = np.percentile(values, (2, 98))
     if hi <= lo:
         hi = lo + 1.0
-    scaled = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+    scaled = np.asarray(np.clip((arr - lo) / (hi - lo), 0.0, 1.0), dtype=np.float32)
     scaled[~finite] = 0.0
     return scaled
 
