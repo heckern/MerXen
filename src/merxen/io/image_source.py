@@ -48,13 +48,13 @@ def _get_image_dataarray(img_obj: Any) -> Any:
     Returns:
         The underlying DataArray or array.
     """
-    img_xr = img_obj
-    if hasattr(img_obj, "__contains__") and "scale0" in img_obj:
-        img_xr = img_obj["scale0"].ds["image"]
-    else:
-        with suppress(Exception):
-            img_xr = img_obj["scale0"].ds["image"]
-    return img_xr
+    if hasattr(img_obj, "dims") and hasattr(img_obj, "data"):
+        return img_obj
+
+    with suppress(Exception):
+        return img_obj["scale0"].ds["image"]
+
+    return img_obj
 
 
 def build_image_source(
