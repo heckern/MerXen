@@ -10,6 +10,44 @@ import numpy as np
 import pandas as pd
 
 
+def _prepare_overlay_image(image: np.ndarray) -> tuple[np.ndarray, str | None]:
+    """Convert microscopy image data into a display-safe grayscale or RGB array."""
+    arr = np.asarray(image)
+
+    if arr.ndim == 2:
+        return _normalize_channel(arr), "gray"
+
+    if arr.ndim != 3:
+        raise ValueError(f"Expected 2D or 3D image data, got shape {arr.shape}")
+
+    if arr.shape[-1] == 1:
+        return _normalize_channel(arr[..., 0]), "gray"
+
+    arr = arr.astype(np.float32, copy=False)
+    if arr.shape[-1] == 2:
+        arr = np.concatenate([arr, np.zeros_like(arr[..., :1])], axis=-1)
+    elif arr.shape[-1] > 3:
+        arr = arr[..., :3]
+
+    return _normalize_channel(arr), None
+
+
+def _normalize_channel(arr: np.ndarray) -> np.ndarray:
+    """Percentile-normalize an array to the [0, 1] range for plotting."""
+    arr = arr.astype(np.float32, copy=False)
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.zeros_like(arr, dtype=np.float32)
+
+    values = arr[finite]
+    lo, hi = np.percentile(values, (2, 98))
+    if hi <= lo:
+        hi = lo + 1.0
+    scaled = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+    scaled[~finite] = 0.0
+    return scaled
+
+
 def plot_sanity_overlay(
     image: np.ndarray,
     output_path: Path | str,
@@ -24,12 +62,10 @@ def plot_sanity_overlay(
     """Overlay shape boundaries and transcript points on an image crop."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    display_image, cmap = _prepare_overlay_image(image)
 
     fig, ax = plt.subplots(figsize=(6, 6))
-    if image.ndim == 2:
-        ax.imshow(image, cmap="gray")
-    else:
-        ax.imshow(image)
+    ax.imshow(display_image, cmap=cmap)
 
     if shapes is not None and len(shapes) > 0:
         shapes.boundary.plot(ax=ax, linewidth=0.5, color="#F97316", alpha=0.85)
