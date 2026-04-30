@@ -60,9 +60,8 @@ stages consume the enriched zarrs directly.
 ## Channel keys and joins
 
 Per-platform stages key on `"${pair_id}|${platform}"` (e.g. `P0001|MERSCOPE`).
-The paired stages key on `pair_id` alone. The workflow
-[workflows/main.nf:280-292](../workflows/main.nf#L280-L292) filters the QC
-channel into MERSCOPE and XENIUM sub-channels and joins them by `pair_id`.
+The paired stages key on `pair_id` alone. The workflow filters the QC channel
+into MERSCOPE and XENIUM sub-channels and joins them by `pair_id`.
 
 ## Data flow for one row
 
@@ -84,12 +83,17 @@ All published artifacts land under
 
 ## Caching and reuse
 
-Two independent caching layers:
+Two independent reuse paths and one Nextflow cache:
 
 - **SpatialData reuse.** A samplesheet can point `merscope_spatialdata_path` /
   `xenium_spatialdata_path` at an existing built zarr. `build_spatialdata`
   short-circuits to that artifact unless `--force_spatialdata_build true` is
   passed. Implemented in [src/merxen/io/builders/pipeline.py:14](../src/merxen/io/builders/pipeline.py#L14).
+- **Published-output stage starts.** `--start_stage`, `--stop_stage`, and
+  `--only_stage` select a contiguous process range without invoking earlier
+  stages. When an upstream stage is skipped, the workflow reads the expected
+  artifact from `${outdir}` and errors if it is missing. This is useful when
+  `-resume` would pick the wrong Nextflow run lineage.
 - **Nextflow work-dir caching.** Resume a run with `nextflow run ... -resume`
   and completed processes will be skipped. `publishDir` modes are set so that
   SpatialData-heavy stages are symlinked rather than copied.

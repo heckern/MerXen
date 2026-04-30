@@ -38,7 +38,12 @@ any of them with `--<name>` on the command line.
 | Param | Description |
 |-------|-------------|
 | `samplesheet` | Path to the samplesheet CSV. |
-| `proseg_binary` | Path to the ProSeg binary. |
+
+### Stage-specific
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `proseg_binary` | `null` | Path to the ProSeg binary. Required only when `SEGMENT` runs. |
 
 ### General
 
@@ -46,6 +51,14 @@ any of them with `--<name>` on the command line.
 |-------|---------|-------------|
 | `outdir` | `./results` | Output root. |
 | `force_spatialdata_build` | `false` | Rebuild SpatialData zarrs even if cached. |
+| `start_stage` | `build_spatialdata` | First stage to run. Skipped upstream stages are read from published outputs. |
+| `stop_stage` | `visualize` | Last stage to run. Defaults to running through the end. |
+| `only_stage` | `null` | Run exactly one stage; overrides `start_stage` and `stop_stage` when set. |
+
+Stage names accepted by `start_stage`, `stop_stage`, and `only_stage` are:
+`build_spatialdata`, `segment`, `enrich`, `qc`, `align`, `align_qc`,
+`compare`, and `visualize`. `align` and `align_qc` are available only with
+`enable_alignment = true`.
 
 ### Cellpose
 

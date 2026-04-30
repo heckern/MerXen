@@ -1,8 +1,9 @@
 # Running the pipeline
 
-Once you have a conda environment, a ProSeg binary, and a samplesheet (see
-[Getting started](getting-started.md) and [Samplesheet format](samplesheet.md)),
-the pipeline is driven by a single `nextflow run` invocation.
+Once you have a conda environment, a samplesheet, and, for full runs, a ProSeg
+binary (see [Getting started](getting-started.md) and
+[Samplesheet format](samplesheet.md)), the pipeline is driven by a single
+`nextflow run` invocation.
 
 ## Basic invocation
 
@@ -13,20 +14,22 @@ nextflow run workflows/main.nf \
     --proseg_binary /path/to/proseg
 ```
 
-Required parameters:
+Required parameter:
 
 | Flag | Description |
 |------|-------------|
 | `--samplesheet` | Path to your CSV. |
-| `--proseg_binary` | Absolute path to the ProSeg binary. |
 
-Optional parameter everyone hits sooner or later:
+Common optional parameters:
 
 | Flag | Description |
 |------|-------------|
 | `--outdir` | Where all outputs are published. Defaults to `./results`. |
+| `--proseg_binary` | Absolute path to the ProSeg binary. Required when `SEGMENT` runs. |
 | `--force_spatialdata_build` | Force rebuilding the SpatialData zarr even when a cached one exists. Defaults to `false`. |
 | `--enable_alignment` | Run optional Spateo alignment and alignment QC before comparison. Defaults to `false`. |
+| `--start_stage` / `--stop_stage` | Run a contiguous stage range. Defaults to the full pipeline. |
+| `--only_stage` | Convenience alias for setting `start_stage` and `stop_stage` to the same stage. |
 
 Every other parameter has a default in
 [workflows/nextflow.config](../workflows/nextflow.config). See
@@ -83,7 +86,7 @@ for the complete list.
 ## Monitoring a run
 
 Three reports are written to `${outdir}/nextflow/` automatically
-(see [workflows/nextflow.config:75-96](../workflows/nextflow.config#L75-L96)):
+(see [workflows/nextflow.config](../workflows/nextflow.config)):
 
 | File | What it shows |
 |------|---------------|
@@ -97,14 +100,54 @@ failures.
 
 ## Running a subset of stages
 
-The workflow in [workflows/main.nf](../workflows/main.nf) is a single DSL2
-`workflow {}` block, so there is no built-in `--stages` flag. Two options:
+Use `--start_stage`, `--stop_stage`, or `--only_stage` when you want to run a
+piece of the pipeline without relying on Nextflow's `-resume` cache lineage.
+Skipped upstream stages are not invoked. Instead, the workflow checks for their
+published outputs under `--outdir` and fails early if an expected file is
+missing.
 
-1. **Resume.** If the pipeline has already produced the stage outputs for some
-   pairs, `-resume` will short-circuit them.
-2. **Invoke the CLI directly.** Every stage is also a plain Python entry
-   point — write your own JSON config and run `merxen <subcommand> --config ...`.
-   See [CLI reference](cli.md) for argument shapes.
+Accepted stages are:
+
+`build_spatialdata`, `segment`, `enrich`, `qc`, `align`, `align_qc`, `compare`,
+and `visualize`. Alignment stages are only active when `--enable_alignment true`
+is set.
+
+Run one stage:
+
+```bash
+nextflow run workflows/main.nf \
+    --samplesheet workflows/samplesheet.csv \
+    --outdir ./results \
+    --enable_alignment false \
+    --only_stage visualize
+```
+
+Run from a stage through the end:
+
+```bash
+nextflow run workflows/main.nf \
+    --samplesheet workflows/samplesheet.csv \
+    --outdir ./results \
+    --enable_alignment false \
+    --start_stage qc
+```
+
+Run a bounded range:
+
+```bash
+nextflow run workflows/main.nf \
+    --samplesheet workflows/samplesheet.csv \
+    --outdir ./results \
+    --enable_alignment false \
+    --start_stage qc \
+    --stop_stage compare
+```
+
+Starting at `segment` still needs `--proseg_binary`; starting later does not.
+Starting at `compare` or `visualize` with `--enable_alignment false` reads
+`${outdir}/${pair_id}/{merscope,xenium}/latest/latest_spatialdata.zarr`.
+With `--enable_alignment true`, those stages read the aligned zarrs under
+`${outdir}/${pair_id}/alignment/align_out/`.
 
 ## Running on a cluster
 
