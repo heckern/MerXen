@@ -6,6 +6,7 @@ include { BUILD_SPATIALDATA } from "./modules/spatialdata_build"
 include { SEGMENT } from "./modules/segmentation"
 include { ENRICH } from "./modules/enrichment"
 include { QC } from "./modules/qc"
+include { ALIGN; ALIGN_QC } from "./modules/alignment"
 include { COMPARE } from "./modules/comparison"
 include { VISUALIZE } from "./modules/visualization"
 
@@ -308,13 +309,24 @@ workflow {
             tuple(pairId, file(merscopeLatest), file(xeniumLatest))
         }
 
-    compare_results_ch = COMPARE(paired_zarrs_ch)
+    if (params.enable_alignment) {
+        alignment_results_ch = ALIGN(paired_zarrs_ch)
+        ALIGN_QC(alignment_results_ch)
+        downstream_zarrs_ch = alignment_results_ch.map {
+            pairId, merscopeAligned, xeniumAligned, transformJson, coordsDir ->
+                tuple(pairId, merscopeAligned, xeniumAligned)
+        }
+    } else {
+        downstream_zarrs_ch = paired_zarrs_ch
+    }
+
+    compare_results_ch = COMPARE(downstream_zarrs_ch)
 
     compare_done_ch = compare_results_ch.map { pairId, compareOutDir ->
         tuple(pairId, true)
     }
 
-    visualize_inputs_ch = paired_zarrs_ch
+    visualize_inputs_ch = downstream_zarrs_ch
         .join(compare_done_ch)
         .map { pairId, merscopeLatest, xeniumLatest, doneFlag ->
             tuple(pairId, merscopeLatest, xeniumLatest)
