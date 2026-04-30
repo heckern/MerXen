@@ -7,6 +7,7 @@ import sys
 
 import click
 
+from merxen.cli.run_alignment import align_command, alignment_qc_command
 from merxen.cli.run_build_spatialdata import build_spatialdata_command
 from merxen.cli.run_comparison import compare_command
 from merxen.cli.run_enrichment import enrich_command
@@ -31,5 +32,7 @@ main.add_command(build_spatialdata_command)
 main.add_command(segment_command)
 main.add_command(enrich_command)
 main.add_command(qc_command)
+main.add_command(align_command)
+main.add_command(alignment_qc_command)
 main.add_command(compare_command)
 main.add_command(visualize_command)

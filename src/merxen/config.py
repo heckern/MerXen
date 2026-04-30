@@ -178,6 +178,62 @@ class QCConfig(BaseModel):
     output_dir: Path
 
 
+class SpateoAlignmentConfig(BaseModel):
+    """Spateo registration parameters for paired-section alignment."""
+
+    model_config = {"populate_by_name": True}
+
+    mode: str = "SN-S"
+    device: str = "auto"
+    dtype: str = "float32"
+    max_iter: int = 500
+    beta: float = 1.0
+    lambda_vf: float = Field(default=1.0, alias="lambdaVF")
+    k: int = Field(default=50, alias="K")
+    partial_robust_level: int = 50
+    SVI_mode: bool = True
+    n_sampling: int = 1_000
+    sparse_calculation_mode: bool = True
+    use_chunk: bool = True
+    chunk_capacity: int = 1
+    normalize_total: float = 10_000.0
+    log1p: bool = True
+    use_hvg: bool = True
+    n_top_genes: int = 100
+    include_image_features: bool = True
+    selected_mode: Literal["rigid", "nonrigid"] = "nonrigid"
+    rbf_neighbors: int = 64
+    rbf_smoothing: float = 0.0
+    max_nonrigid_anchors: int = 5_000
+    tune: bool = False
+    param_grid: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AlignmentConfig(BaseModel):
+    """Configuration for paired MERSCOPE-to-Xenium section alignment."""
+
+    pair_id: str
+    merscope_zarr_path: Path
+    xenium_zarr_path: Path
+    output_dir: Path
+    fixed_platform: Literal["XENIUM"] = "XENIUM"
+    moving_platform: Literal["MERSCOPE"] = "MERSCOPE"
+    write_aligned_zarrs: bool = True
+    spateo: SpateoAlignmentConfig = SpateoAlignmentConfig()
+
+
+class AlignmentQCConfig(BaseModel):
+    """Configuration for post-alignment QC metrics."""
+
+    pair_id: str
+    merscope_zarr_path: Path
+    xenium_zarr_path: Path
+    output_dir: Path
+    transform_json_path: Path | None = None
+    grid_rows: int = 10
+    grid_cols: int = 10
+
+
 class ComparisonConfig(BaseModel):
     """Configuration for cross-platform comparison."""
 

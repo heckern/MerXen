@@ -39,6 +39,9 @@ dev = [
     "mypy>=1.0",
     "pre-commit>=3.0",
 ]
+alignment = [
+    "spateo-release==1.1.1",
+]
 
 [project.scripts]
 merxen = "merxen.cli:main"
