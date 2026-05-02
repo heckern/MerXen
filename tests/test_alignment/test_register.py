@@ -130,7 +130,7 @@ def test_register_pair_runs_opt_in_param_grid() -> None:
     }
     result = register_pair(merscope, xenium, cfg, spateo_runner=runner)
 
-    assert calls == [50, 75]
+    assert calls == [100, 75]
     assert len(result.metadata["tuning"]) == 2
 
 
@@ -143,13 +143,67 @@ def test_spateo_kwargs_map_sampling_to_installed_api() -> None:
             *,
             batch_size: int,
             beta: float,
+            allow_flip: bool,
+            nonrigid_start_iter: int,
+            sparse_top_k: int,
         ) -> None:
-            del batch_size, beta
+            del batch_size, beta, allow_flip, nonrigid_start_iter, sparse_top_k
 
     cfg = SpateoAlignmentConfig(n_sampling=123, beta=2.0)
     kwargs = _spateo_pairwise_kwargs(cfg, PairwiseWithBatchSize)
 
-    assert kwargs == {"beta": 2.0, "batch_size": 123}
+    assert kwargs == {
+        "beta": 2.0,
+        "nonrigid_start_iter": 220,
+        "allow_flip": True,
+        "sparse_top_k": 512,
+        "batch_size": 123,
+    }
+
+
+def test_register_pair_samples_alignment_cells_and_adds_pca_features() -> None:
+    """Notebook-tuned alignment should subsample and add joint PCA features."""
+    xenium = _fake_sdata((0.0, 0.0))
+    merscope = _fake_sdata((5.0, -2.0))
+
+    def runner(
+        fixed: ad.AnnData,
+        moving: ad.AnnData,
+        config: object,
+    ) -> tuple[ad.AnnData, ad.AnnData]:
+        del config
+        assert fixed.n_obs == 3
+        assert moving.n_obs == 3
+        assert fixed.obsm["X_pca"].shape == (3, 2)
+        assert moving.obsm["X_pca"].shape == (3, 2)
+        fixed = fixed.copy()
+        moving = moving.copy()
+        fixed.obsm["align_spatial"] = fixed.obsm["spatial"].copy()
+        fixed.obsm["align_spatial_rigid"] = fixed.obsm["spatial"].copy()
+        moving.obsm["align_spatial_rigid"] = moving.obsm["spatial"] + np.array(
+            [-5.0, 2.0]
+        )
+        moving.obsm["align_spatial_nonrigid"] = moving.obsm[
+            "align_spatial_rigid"
+        ].copy()
+        moving.obsm["align_spatial"] = moving.obsm["align_spatial_nonrigid"].copy()
+        return fixed, moving
+
+    cfg = {
+        "pair_id": "sampled",
+        "merscope_zarr_path": "merscope.zarr",
+        "xenium_zarr_path": "xenium.zarr",
+        "output_dir": "align_out",
+        "spateo": {
+            "max_alignment_cells": 3,
+            "alignment_seed": 7,
+            "use_pca": True,
+            "n_pcs": 2,
+        },
+    }
+    result = register_pair(merscope, xenium, cfg, spateo_runner=runner)
+
+    assert result.metadata["n_alignment_cells"] == {"xenium": 3, "merscope": 3}
 
 
 def test_spateo_device_aliases_use_cuda_visible_device_ids() -> None:
@@ -178,8 +232,20 @@ def test_spateo_alignment_defaults_are_gpu_conservative() -> None:
     cfg = SpateoAlignmentConfig()
 
     assert cfg.dtype == "float32"
+    assert cfg.max_alignment_cells == 35000
+    assert cfg.use_pca is True
+    assert cfg.n_pcs == 50
+    assert cfg.use_hvg is False
+    assert cfg.SVI_mode is False
     assert cfg.n_sampling == 1000
+    assert cfg.sparse_top_k == 512
     assert cfg.chunk_capacity == 1
     assert cfg.n_top_genes == 100
-    assert cfg.k == 50
+    assert cfg.max_iter == 360
+    assert cfg.nonrigid_start_iter == 220
+    assert cfg.beta == 0.005
+    assert cfg.lambda_vf == 3000.0
+    assert cfg.k == 15
+    assert cfg.partial_robust_level == 100
     assert cfg.max_nonrigid_anchors == 5000
+    assert cfg.allow_flip is True

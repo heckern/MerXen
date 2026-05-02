@@ -186,20 +186,27 @@ class SpateoAlignmentConfig(BaseModel):
     mode: str = "SN-S"
     device: str = "auto"
     dtype: str = "float32"
-    max_iter: int = 500
-    beta: float = 1.0
-    lambda_vf: float = Field(default=1.0, alias="lambdaVF")
-    k: int = Field(default=50, alias="K")
-    partial_robust_level: int = 50
-    SVI_mode: bool = True
+    max_iter: int = 360
+    nonrigid_start_iter: int = 220
+    beta: float = 0.005
+    lambda_vf: float = Field(default=3000.0, alias="lambdaVF")
+    k: int = Field(default=15, alias="K")
+    partial_robust_level: int = 100
+    allow_flip: bool = True
+    SVI_mode: bool = False
     n_sampling: int = 1_000
+    sparse_top_k: int = 512
     sparse_calculation_mode: bool = True
     use_chunk: bool = True
     chunk_capacity: int = 1
     normalize_total: float = 10_000.0
     log1p: bool = True
-    use_hvg: bool = True
+    use_hvg: bool = False
     n_top_genes: int = 100
+    use_pca: bool = True
+    n_pcs: int = 50
+    max_alignment_cells: int | None = 35_000
+    alignment_seed: int = 21
     include_image_features: bool = True
     selected_mode: Literal["rigid", "nonrigid"] = "nonrigid"
     rbf_neighbors: int = 64

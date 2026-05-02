@@ -96,6 +96,22 @@ def register_pair(
     fixed_for_spateo, moving_for_spateo = shared_gene_subset(
         fixed_for_spateo, moving_for_spateo
     )
+    fixed_for_spateo = _sample_alignment_adata(
+        fixed_for_spateo,
+        max_cells=spateo_cfg.max_alignment_cells,
+        seed=spateo_cfg.alignment_seed,
+    )
+    moving_for_spateo = _sample_alignment_adata(
+        moving_for_spateo,
+        max_cells=spateo_cfg.max_alignment_cells,
+        seed=spateo_cfg.alignment_seed + 1,
+    )
+    if spateo_cfg.use_pca:
+        _add_joint_pca_features(
+            fixed_for_spateo,
+            moving_for_spateo,
+            n_pcs=spateo_cfg.n_pcs,
+        )
 
     fixed_aligned, moving_aligned, tuning_records = _run_spateo_candidates(
         fixed_for_spateo,
@@ -196,6 +212,15 @@ def run_spateo_alignment(
         raise RuntimeError(SPATEO_INSTALL_MESSAGE) from exc
 
     device = _resolve_device(config.device)
+    rep_kwargs = (
+        {
+            "rep_layer": "X_pca",
+            "rep_field": "obsm",
+            "dissimilarity": "cos",
+        }
+        if config.use_pca and "X_pca" in fixed.obsm and "X_pca" in moving.obsm
+        else {}
+    )
     aligned_result = st.align.morpho_align(
         models=[fixed.copy(), moving.copy()],
         spatial_key="spatial",
@@ -205,6 +230,7 @@ def run_spateo_alignment(
         dtype=config.dtype,
         max_iter=config.max_iter,
         verbose=True,
+        **rep_kwargs,
         **_spateo_pairwise_kwargs(config, Morpho_pairwise),
     )
     aligned = (
@@ -229,8 +255,11 @@ def _spateo_pairwise_kwargs(
         "beta": config.beta,
         "lambdaVF": config.lambda_vf,
         "K": config.k,
+        "nonrigid_start_iter": config.nonrigid_start_iter,
         "partial_robust_level": config.partial_robust_level,
+        "allow_flip": config.allow_flip,
         "SVI_mode": config.SVI_mode,
+        "sparse_top_k": config.sparse_top_k,
         "sparse_calculation_mode": config.sparse_calculation_mode,
         "use_chunk": config.use_chunk,
         "chunk_capacity": config.chunk_capacity,
@@ -240,6 +269,48 @@ def _spateo_pairwise_kwargs(
     elif "batch_size" in supported:
         candidates["batch_size"] = config.n_sampling
     return {key: value for key, value in candidates.items() if key in supported}
+
+
+def _sample_alignment_adata(
+    adata: ad.AnnData,
+    *,
+    max_cells: int | None,
+    seed: int,
+) -> ad.AnnData:
+    """Deterministically subsample cells for Spateo's pairwise optimization."""
+    if max_cells is None or int(max_cells) <= 0 or adata.n_obs <= int(max_cells):
+        return adata.copy()
+    rng = np.random.default_rng(int(seed))
+    idx = np.sort(rng.choice(adata.n_obs, size=int(max_cells), replace=False))
+    return adata[idx].copy()
+
+
+def _add_joint_pca_features(
+    fixed: ad.AnnData,
+    moving: ad.AnnData,
+    *,
+    n_pcs: int,
+) -> None:
+    """Add joint PCA expression features matching the Spateo tutorial workflow."""
+    fixed_x = _dense_float_matrix(fixed.X)
+    moving_x = _dense_float_matrix(moving.X)
+    combo = np.vstack([fixed_x, moving_x]).astype(np.float32, copy=False)
+    if combo.shape[0] < 2 or combo.shape[1] == 0:
+        return
+    combo -= combo.mean(axis=0, keepdims=True)
+    n_comps = min(int(n_pcs), combo.shape[1], combo.shape[0] - 1)
+    if n_comps <= 0:
+        return
+    u, s, _ = np.linalg.svd(combo, full_matrices=False)
+    scores = (u[:, :n_comps] * s[:n_comps]).astype(np.float32, copy=False)
+    fixed.obsm["X_pca"] = scores[: fixed.n_obs].copy()
+    moving.obsm["X_pca"] = scores[fixed.n_obs :].copy()
+
+
+def _dense_float_matrix(matrix: Any) -> np.ndarray:
+    if hasattr(matrix, "toarray"):
+        matrix = matrix.toarray()
+    return np.asarray(matrix, dtype=np.float32)
 
 
 def _apply_spateo_import_shims() -> None:
