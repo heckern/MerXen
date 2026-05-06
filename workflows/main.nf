@@ -10,6 +10,7 @@ include { QC } from "./modules/qc"
 include { ALIGN; ALIGN_QC } from "./modules/alignment"
 include { COMPARE } from "./modules/comparison"
 include { VISUALIZE } from "./modules/visualization"
+include { CLUSTERING_SQUIDPY } from "./modules/clustering_squidpy"
 
 def parseChannels(rawValue, defaults) {
     if (rawValue == null) {
@@ -87,11 +88,16 @@ def normalizeStage(rawValue, paramName) {
         "visualise": "visualize",
         "visualization": "visualize",
         "visualisation": "visualize",
+        "cluster": "clustering_squidpy",
+        "clustering": "clustering_squidpy",
+        "clustering_squidpy": "clustering_squidpy",
+        "squidpy": "clustering_squidpy",
     ]
     if (!aliases.containsKey(key)) {
         throw new IllegalArgumentException(
             "Unknown ${paramName} '${raw}'. Valid stages: " +
-            "build_spatialdata, segment, enrich, qc, align, align_qc, compare, visualize"
+            "build_spatialdata, segment, enrich, qc, align, align_qc, " +
+            "compare, visualize, clustering_squidpy"
         )
     }
     return aliases[key]
@@ -102,7 +108,7 @@ def activeStageOrder(alignmentEnabled) {
     if (alignmentEnabled) {
         stages += ["align", "align_qc"]
     }
-    stages += ["compare", "visualize"]
+    stages += ["compare", "visualize", "clustering_squidpy"]
     return stages
 }
 
@@ -176,6 +182,12 @@ workflow {
     def runAlignQc = stageInRange("align_qc", startStage, stopStage, stageOrder)
     def runCompare = stageInRange("compare", startStage, stopStage, stageOrder)
     def runVisualize = stageInRange("visualize", startStage, stopStage, stageOrder)
+    def runClusteringSquidpy = stageInRange(
+        "clustering_squidpy",
+        startStage,
+        stopStage,
+        stageOrder,
+    )
 
     if (runSegment && !params.proseg_binary) {
         error "Missing required parameter for SEGMENT: --proseg_binary"
@@ -551,7 +563,8 @@ workflow {
         qc_results_ch = QC(qc_inputs_ch)
     }
 
-    def needPairedZarrs = runAlign || runAlignQc || runCompare || runVisualize
+    def needPairedZarrs =
+        runAlign || runAlignQc || runCompare || runVisualize || runClusteringSquidpy
     if (needPairedZarrs) {
         if (runQc) {
             merscope_qc_ch = qc_results_ch
@@ -623,7 +636,8 @@ workflow {
     }
 
     if (alignmentEnabled) {
-        def needAlignmentResults = runAlign || runAlignQc || runCompare || runVisualize
+        def needAlignmentResults =
+            runAlign || runAlignQc || runCompare || runVisualize || runClusteringSquidpy
         if (needAlignmentResults) {
             if (runAlign) {
                 alignment_results_ch = ALIGN(paired_zarrs_ch)
@@ -686,7 +700,7 @@ workflow {
                     tuple(pairId, file(merscopeLatest), xeniumLatest)
             }
         }
-    } else if (runCompare || runVisualize) {
+    } else if (runCompare || runVisualize || runClusteringSquidpy) {
         downstream_zarrs_ch = paired_zarrs_ch.map {
             pairId, merscopeLatest, xeniumLatest, merscopePath, xeniumPath ->
                 tuple(pairId, merscopeLatest, xeniumPath)
@@ -712,6 +726,24 @@ workflow {
             visualize_inputs_ch = downstream_zarrs_ch
         }
 
-        VISUALIZE(visualize_inputs_ch)
+        visualize_results_ch = VISUALIZE(visualize_inputs_ch)
+    }
+
+    if (runClusteringSquidpy) {
+        if (runVisualize) {
+            visualize_done_ch = visualize_results_ch.map { pairId, visualizeOutDir ->
+                tuple(pairId, true)
+            }
+
+            clustering_inputs_ch = downstream_zarrs_ch
+                .join(visualize_done_ch)
+                .map { pairId, merscopeLatest, xeniumLatest, doneFlag ->
+                    tuple(pairId, merscopeLatest, xeniumLatest)
+                }
+        } else {
+            clustering_inputs_ch = downstream_zarrs_ch
+        }
+
+        CLUSTERING_SQUIDPY(clustering_inputs_ch)
     }
 }

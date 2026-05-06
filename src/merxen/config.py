@@ -259,6 +259,33 @@ class VisualizationConfig(BaseModel):
     pair_id: str
 
 
+class ClusteringSquidpySampleConfig(BaseModel):
+    """One SpatialData sample to cluster with Scanpy/Squidpy."""
+
+    sample_id: str
+    platform: Literal["MERSCOPE", "XENIUM"]
+    zarr_path: Path
+    table_key: str | None = None
+    shape_key: str | None = None
+
+
+class ClusteringSquidpyConfig(BaseModel):
+    """Configuration for the Squidpy/Scanpy clustering stage."""
+
+    pair_id: str
+    output_dir: Path
+    samples: list[ClusteringSquidpySampleConfig]
+    min_counts: int = 10
+    min_cells: int = 5
+    normalize_target_sum: float | None = None
+    n_pcs: int = 50
+    n_neighbors: int = 15
+    leiden_resolution: float = 1.0
+    random_seed: int = 0
+    spatial_point_size: float = 2.0
+    figure_dpi: int = 160
+
+
 class PipelineConfig(BaseSettings):
     """Top-level pipeline configuration, loadable from env vars."""
 
