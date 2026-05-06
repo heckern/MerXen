@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
 import geopandas as gpd
@@ -726,21 +726,21 @@ def _control_obsm_counts(adata: ad.AnnData) -> np.ndarray | None:
         parts.append(_sum_obsm_rows(value, n_obs=adata.n_obs))
     if not parts:
         return None
-    return np.sum(np.vstack(parts), axis=0)
+    return _float_array(np.sum(np.vstack(parts), axis=0))
 
 
 def _sum_obsm_rows(value: Any, *, n_obs: int) -> np.ndarray:
     if isinstance(value, pd.DataFrame):
         numeric = value.apply(pd.to_numeric, errors="coerce").fillna(0)
-        return numeric.sum(axis=1).to_numpy(float)
+        return _float_array(numeric.sum(axis=1).to_numpy(dtype=float))
     arr = value
     if sparse.issparse(arr):
-        out = np.asarray(arr.sum(axis=1)).ravel().astype(float)
+        out = _float_array(np.asarray(arr.sum(axis=1)).ravel())
     else:
-        out = np.asarray(arr, dtype=float)
+        out = _float_array(arr)
         if out.ndim == 1:
             return out
-        out = np.nansum(out, axis=1)
+        out = _float_array(np.nansum(out, axis=1))
     if len(out) != n_obs:
         raise ValueError(
             f"Control obsm row count mismatch: expected {n_obs}, got {len(out)}"
@@ -750,14 +750,19 @@ def _sum_obsm_rows(value: Any, *, n_obs: int) -> np.ndarray:
 
 def _sum_matrix_rows(matrix: Any) -> np.ndarray:
     if sparse.issparse(matrix):
-        return np.asarray(matrix.sum(axis=1)).ravel().astype(float)
-    arr = np.asarray(matrix, dtype=float)
+        return _float_array(np.asarray(matrix.sum(axis=1)).ravel())
+    arr = _float_array(matrix)
     if arr.ndim == 1:
         return arr
-    return np.nansum(arr, axis=1)
+    return _float_array(np.nansum(arr, axis=1))
+
+
+def _float_array(value: Any) -> np.ndarray:
+    """Coerce array-like values to a float NumPy array for typed helpers."""
+    return cast(np.ndarray, np.asarray(value, dtype=float))
 
 
 def _obs_numeric(adata: ad.AnnData, column: str) -> np.ndarray:
     if column not in adata.obs:
         return np.full(adata.n_obs, np.nan, dtype=float)
-    return pd.to_numeric(adata.obs[column], errors="coerce").to_numpy(float)
+    return _float_array(pd.to_numeric(adata.obs[column], errors="coerce"))
