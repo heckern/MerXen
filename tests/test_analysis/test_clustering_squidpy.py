@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import sys
+import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import anndata as ad
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pytest
+from scipy import sparse
 from shapely.geometry import box
 
 from merxen.analysis.clustering_squidpy import (
+    _run_gpu_clustering,
     adata_from_spatialdata,
+    plot_spatial_scatter,
+    remove_control_features,
     run_scanpy_clustering,
 )
 
@@ -136,11 +144,138 @@ def test_run_scanpy_clustering_adds_umap_and_leiden() -> None:
         adata,
         min_counts=1,
         min_cells=1,
+        normalize_exclude_highly_expressed=False,
         n_pcs=3,
         n_neighbors=3,
+        umap_min_dist=0.2,
+        umap_spread=1.5,
         random_seed=1,
+        use_gpu=False,
     )
 
     assert "counts" in out.layers
     assert "X_umap" in out.obsm
     assert "leiden" in out.obs
+    assert out.uns["merxen_clustering_params"]["umap_min_dist"] == 0.2
+    assert out.uns["merxen_clustering_params"]["umap_spread"] == 1.5
+
+
+def test_remove_control_features_drops_blank_negative_and_unassigned() -> None:
+    """Control-like features should be excluded from clustering inputs."""
+    adata = ad.AnnData(
+        X=np.ones((4, 5), dtype=np.float32),
+        obs=pd.DataFrame(index=[f"cell{i}" for i in range(4)]),
+        var=pd.DataFrame(
+            index=[
+                "GeneA",
+                "Blank-1",
+                "NegControlProbe_00001",
+                "UnassignedCodeword_0001",
+                "GeneB",
+            ]
+        ),
+    )
+
+    filtered = remove_control_features(adata)
+
+    assert list(filtered.var_names) == ["GeneA", "GeneB"]
+    summary = filtered.uns["merxen_clustering_squidpy"]["control_feature_filter"]
+    assert summary["n_features_before"] == 5
+    assert summary["n_control_features_removed"] == 3
+    assert summary["removed_control_features"] == [
+        "Blank-1",
+        "NegControlProbe_00001",
+        "UnassignedCodeword_0001",
+    ]
+
+
+def test_run_gpu_clustering_uses_chunked_pca_for_sparse_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sparse GPU PCA should avoid rapids-singlecell's fragile sparse helper."""
+    adata = ad.AnnData(
+        X=sparse.csr_matrix(np.ones((20, 6), dtype=np.float32)),
+        obs=pd.DataFrame(index=[f"cell{i}" for i in range(20)]),
+        var=pd.DataFrame(index=[f"Gene{i}" for i in range(6)]),
+    )
+    calls: dict[str, object] = {}
+
+    fake_get = SimpleNamespace(
+        anndata_to_GPU=lambda data: calls.setdefault("to_gpu", data),
+        anndata_to_CPU=lambda data: calls.setdefault("to_cpu", data),
+    )
+
+    def fake_pca(data: ad.AnnData, **kwargs: object) -> None:
+        calls["pca"] = kwargs
+        data.obsm["X_pca"] = np.ones((data.n_obs, 3), dtype=np.float32)
+
+    def fake_neighbors(data: ad.AnnData, **kwargs: object) -> None:
+        calls["neighbors"] = kwargs
+
+    fake_pp = SimpleNamespace(pca=fake_pca, neighbors=fake_neighbors)
+    fake_tl = SimpleNamespace(
+        umap=lambda data, **kwargs: calls.setdefault("umap", kwargs),
+        leiden=lambda data, **kwargs: calls.setdefault("leiden", kwargs),
+    )
+    fake_rsc = SimpleNamespace(get=fake_get, pp=fake_pp, tl=fake_tl)
+    monkeypatch.setitem(sys.modules, "rapids_singlecell", fake_rsc)
+
+    gpu_used = _run_gpu_clustering(
+        adata,
+        max_pcs=3,
+        n_pcs_for_neighbors=3,
+        effective_neighbors=5,
+        umap_min_dist=0.4,
+        umap_spread=1.2,
+        leiden_resolution=0.8,
+        random_seed=7,
+    )
+
+    assert gpu_used is True
+    assert calls["to_gpu"] is adata
+    assert calls["to_cpu"] is adata
+    assert calls["pca"] == {
+        "n_comps": 3,
+        "random_state": 7,
+        "chunked": True,
+        "chunk_size": adata.n_obs,
+    }
+    assert calls["neighbors"] == {
+        "n_neighbors": 5,
+        "n_pcs": 3,
+        "use_rep": "X_pca",
+        "random_state": 7,
+    }
+
+
+def test_plot_spatial_scatter_suppresses_squidpy_noise(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Image-less spatial scatter should not emit Squidpy library warnings."""
+    adata = ad.AnnData(
+        X=np.ones((5, 2), dtype=np.float32),
+        obs=pd.DataFrame(
+            {"leiden": pd.Categorical(["0", "1", "0", "1", "2"])},
+            index=[f"cell{i}" for i in range(5)],
+        ),
+        var=pd.DataFrame(index=["Gene0", "Gene1"]),
+    )
+    adata.obsm["spatial"] = np.column_stack(
+        [np.arange(adata.n_obs), np.arange(adata.n_obs)]
+    )
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        output_path = plot_spatial_scatter(
+            adata,
+            tmp_path / "spatial.png",
+            point_size=0.2,
+        )
+
+    captured = capsys.readouterr()
+    warning_text = "\n".join(str(item.message) for item in recorded)
+    output_text = f"{captured.out}\n{captured.err}"
+    assert output_path.exists()
+    assert "No data for colormapping provided via 'c'" not in warning_text
+    assert "Please specify a valid `library_id`" not in output_text
