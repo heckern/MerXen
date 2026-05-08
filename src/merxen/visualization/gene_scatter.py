@@ -53,9 +53,9 @@ def plot_gene_scatter(
         ly = np.log10(y_plot)
         slope, intercept, r2 = fit_linear(lx, ly)
         if np.isfinite(slope):
-            x_line = np.logspace(np.log10(lo), np.log10(hi), 200)
-            y_line = 10 ** (slope * np.log10(x_line) + intercept)
-            ax.plot(x_line, y_line, linewidth=1.5, label="best fit")
+            x_fit_log = np.logspace(np.log10(lo), np.log10(hi), 200)
+            y_fit_log = 10 ** (slope * np.log10(x_fit_log) + intercept)
+            ax.plot(x_fit_log, y_fit_log, linewidth=1.5, label="best fit")
             ax.text(
                 0.03,
                 0.97,
@@ -75,9 +75,9 @@ def plot_gene_scatter(
         ax.plot([lo, hi], [lo, hi], "--", linewidth=1.2, label="y = x")
         slope, intercept, r2 = fit_linear(x, y)
         if np.isfinite(slope):
-            x_line = np.linspace(lo, hi, 200)
-            y_line = slope * x_line + intercept
-            ax.plot(x_line, y_line, linewidth=1.5, label="best fit")
+            x_fit_linear = np.linspace(lo, hi, 200)
+            y_fit_linear = slope * x_fit_linear + intercept
+            ax.plot(x_fit_linear, y_fit_linear, linewidth=1.5, label="best fit")
             ax.text(
                 0.03,
                 0.97,
