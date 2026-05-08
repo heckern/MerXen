@@ -2,28 +2,36 @@
 
 from __future__ import annotations
 
-from merxen.analysis.clustering_squidpy import (
-    adata_from_spatialdata,
-    add_qc_metrics,
-    load_spatialdata_adata,
-    plot_qc_histograms,
-    plot_spatial_scatter,
-    plot_umap,
-    run_clustering_squidpy,
-    run_scanpy_clustering,
-    save_clustered_adata,
-    save_qc_metrics,
-)
+from importlib import import_module
+from typing import Any
 
-__all__ = [
-    "add_qc_metrics",
-    "adata_from_spatialdata",
-    "load_spatialdata_adata",
-    "plot_qc_histograms",
-    "plot_spatial_scatter",
-    "plot_umap",
-    "run_clustering_squidpy",
-    "run_scanpy_clustering",
-    "save_clustered_adata",
-    "save_qc_metrics",
-]
+_EXPORT_MODULES = {
+    "add_qc_metrics": "merxen.analysis.clustering_squidpy",
+    "adata_from_spatialdata": "merxen.analysis.clustering_squidpy",
+    "load_spatialdata_adata": "merxen.analysis.clustering_squidpy",
+    "plot_qc_histograms": "merxen.analysis.clustering_squidpy",
+    "plot_spatial_scatter": "merxen.analysis.clustering_squidpy",
+    "plot_umap": "merxen.analysis.clustering_squidpy",
+    "remove_control_features": "merxen.analysis.clustering_squidpy",
+    "run_clustering_squidpy": "merxen.analysis.clustering_squidpy",
+    "run_scanpy_clustering": "merxen.analysis.clustering_squidpy",
+    "save_clustered_adata": "merxen.analysis.clustering_squidpy",
+    "save_qc_metrics": "merxen.analysis.clustering_squidpy",
+    "annotate_h5ad_with_mapmycells": "merxen.analysis.mapmycells",
+    "build_mapmycells_command": "merxen.analysis.mapmycells",
+    "prepare_mapmycells_query": "merxen.analysis.mapmycells",
+    "read_mapmycells_csv": "merxen.analysis.mapmycells",
+    "run_mapmycells": "merxen.analysis.mapmycells",
+}
+
+__all__ = list(_EXPORT_MODULES)
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose analysis functions without importing every dependency."""
+    if name not in _EXPORT_MODULES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(_EXPORT_MODULES[name])
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

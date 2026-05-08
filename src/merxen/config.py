@@ -292,6 +292,40 @@ class ClusteringSquidpyConfig(BaseModel):
     use_gpu: bool = True
 
 
+class MapMyCellsSampleConfig(BaseModel):
+    """One clustered AnnData sample to annotate with MapMyCells."""
+
+    sample_id: str
+    platform: Literal["MERSCOPE", "XENIUM"]
+    anndata_path: Path
+    query_layer: str | None = "counts"
+    gene_id_column: str | None = None
+    obs_id_column: str | None = None
+
+
+class MapMyCellsConfig(BaseModel):
+    """Configuration for local MapMyCells cell type assignment."""
+
+    pair_id: str
+    output_dir: Path
+    samples: list[MapMyCellsSampleConfig]
+    marker_lookup_path: Path
+    precomputed_stats_path: Path
+    drop_level: str | None = None
+    normalization: Literal["raw", "log2CPM"] = "raw"
+    bootstrap_factor: float = Field(default=0.9, gt=0.0, le=1.0)
+    bootstrap_iteration: int = Field(default=100, ge=1)
+    n_processors: int = Field(default=4, ge=1)
+    chunk_size: int | None = Field(default=None, ge=1)
+    rng_seed: int | None = None
+    max_gb: float | None = Field(default=None, gt=0.0)
+    tmp_dir: Path | None = None
+    cloud_safe: bool = False
+    flatten: bool = False
+    verbose_csv: bool = False
+    extra_args: list[str] = Field(default_factory=list)
+
+
 class PipelineConfig(BaseSettings):
     """Top-level pipeline configuration, loadable from env vars."""
 

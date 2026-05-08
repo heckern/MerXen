@@ -19,6 +19,7 @@ anndata==0.12.10
     # via
     #   merxen (pyproject.toml)
     #   annsel
+    #   cell-type-mapper
     #   readfcs
     #   scanpy
     #   spatialdata
@@ -28,6 +29,8 @@ annotated-types==0.7.0
     # via pydantic
 annsel==0.1.2
     # via spatialdata
+argschema==3.0.4
+    # via cell-type-mapper
 array-api-compat==1.14.0
     # via anndata
 attrs==26.1.0
@@ -36,6 +39,8 @@ attrs==26.1.0
     #   omnipath
 botocore==1.42.84
     # via aiobotocore
+cell-type-mapper @ git+https://github.com/AllenInstitute/cell_type_mapper@d79f2a5a0780170be392da3ba0e7d0eb86a36238
+    # via merxen (pyproject.toml)
 cellpose==4.1.1
     # via merxen (pyproject.toml)
 certifi==2026.2.25
@@ -100,6 +105,8 @@ docrep==0.3.2
     #   squidpy
 donfig==0.8.1.post1
     # via zarr
+execnet==2.1.2
+    # via pytest-xdist
 fast-array-utils==1.4.1
     # via
     #   scanpy
@@ -204,9 +211,14 @@ markdown-it-py==4.0.0
     # via rich
 markupsafe==3.0.3
     # via jinja2
+marshmallow==3.12.2
+    # via
+    #   argschema
+    #   cell-type-mapper
 matplotlib==3.10.8
     # via
     #   merxen (pyproject.toml)
+    #   cell-type-mapper
     #   matplotlib-scalebar
     #   scanpy
     #   seaborn
@@ -268,10 +280,12 @@ numba==0.65.0
     #   xarray-spatial
 numcodecs==0.16.5
     # via zarr
-numpy==2.4.4
+numpy==2.2.6
     # via
     #   merxen (pyproject.toml)
     #   anndata
+    #   argschema
+    #   cell-type-mapper
     #   cellpose
     #   contourpy
     #   dask
@@ -481,9 +495,13 @@ pyproj==3.7.2
 pytest==9.0.3
     # via
     #   merxen (pyproject.toml)
+    #   cell-type-mapper
     #   pytest-cov
+    #   pytest-xdist
 pytest-cov==7.1.0
     # via merxen (pyproject.toml)
+pytest-xdist==3.8.0
+    # via cell-type-mapper
 python-dateutil==2.9.0.post0
     # via
     #   aiobotocore
@@ -501,6 +519,7 @@ pytz==2026.1.post1
     # via pandas
 pyyaml==6.0.3
     # via
+    #   argschema
     #   dask
     #   distributed
     #   donfig
@@ -544,10 +563,11 @@ scikit-learn==1.8.0
     #   spatialdata-plot
     #   squidpy
     #   umap-learn
-scipy==1.17.1
+scipy==1.14.1
     # via
     #   merxen (pyproject.toml)
     #   anndata
+    #   cell-type-mapper
     #   cellpose
     #   dask-image
     #   datashader

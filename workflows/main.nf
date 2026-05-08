@@ -11,6 +11,7 @@ include { ALIGN; ALIGN_QC } from "./modules/alignment"
 include { COMPARE } from "./modules/comparison"
 include { VISUALIZE } from "./modules/visualization"
 include { CLUSTERING_SQUIDPY } from "./modules/clustering_squidpy"
+include { MAPMYCELLS } from "./modules/mapmycells"
 
 def parseChannels(rawValue, defaults) {
     if (rawValue == null) {
@@ -92,12 +93,16 @@ def normalizeStage(rawValue, paramName) {
         "clustering": "clustering_squidpy",
         "clustering_squidpy": "clustering_squidpy",
         "squidpy": "clustering_squidpy",
+        "cell_type_mapping": "mapmycells",
+        "celltype_mapping": "mapmycells",
+        "map_my_cells": "mapmycells",
+        "mapmycells": "mapmycells",
     ]
     if (!aliases.containsKey(key)) {
         throw new IllegalArgumentException(
             "Unknown ${paramName} '${raw}'. Valid stages: " +
             "build_spatialdata, segment, enrich, qc, align, align_qc, " +
-            "compare, visualize, clustering_squidpy"
+            "compare, visualize, clustering_squidpy, mapmycells"
         )
     }
     return aliases[key]
@@ -108,7 +113,7 @@ def activeStageOrder(alignmentEnabled) {
     if (alignmentEnabled) {
         stages += ["align", "align_qc"]
     }
-    stages += ["compare", "visualize", "clustering_squidpy"]
+    stages += ["compare", "visualize", "clustering_squidpy", "mapmycells"]
     return stages
 }
 
@@ -188,9 +193,18 @@ workflow {
         stopStage,
         stageOrder,
     )
+    def runMapMyCells = stageInRange("mapmycells", startStage, stopStage, stageOrder)
 
     if (runSegment && !params.proseg_binary) {
         error "Missing required parameter for SEGMENT: --proseg_binary"
+    }
+    if (runMapMyCells) {
+        if (!params.mapmycells_marker_lookup_path) {
+            error "Missing required parameter for MAPMYCELLS: --mapmycells_marker_lookup_path"
+        }
+        if (!params.mapmycells_precomputed_stats_path) {
+            error "Missing required parameter for MAPMYCELLS: --mapmycells_precomputed_stats_path"
+        }
     }
 
     def selectedStages = stageOrder.findAll { stageInRange(it, startStage, stopStage, stageOrder) }
@@ -744,6 +758,28 @@ workflow {
             clustering_inputs_ch = downstream_zarrs_ch
         }
 
-        CLUSTERING_SQUIDPY(clustering_inputs_ch)
+        clustering_results_ch = CLUSTERING_SQUIDPY(clustering_inputs_ch)
+    }
+
+    if (runMapMyCells) {
+        if (!runClusteringSquidpy) {
+            clustering_results_ch = samplesheet_ch.map { row ->
+                def pairId = row.pair_id?.toString()?.trim()
+                if (!pairId) {
+                    error "Found samplesheet row with missing pair_id: ${row}"
+                }
+                def clusteringOut = requireExistingPath(
+                    publishedPairPath(
+                        params.outdir,
+                        pairId,
+                        "clustering_squidpy/clustering_squidpy_out",
+                    ),
+                    "CLUSTERING_SQUIDPY output directory for ${pairId}",
+                )
+                tuple(pairId, clusteringOut)
+            }
+        }
+
+        MAPMYCELLS(clustering_results_ch)
     }
 }
