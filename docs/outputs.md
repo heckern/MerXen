@@ -170,8 +170,12 @@ Path: `${outdir}/<pair_id>/mapmycells/`
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells.csv` | Per-cell MapMyCells assignments and confidence columns. |
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_extended.json` | Full MapMyCells JSON result, including config, log, marker genes, and taxonomy tree. |
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells.log` | MapMyCells run log. |
+| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_stdout.log` | Captured stdout from the local mapper process. |
+| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_stderr.log` | Captured stderr from the local mapper process, including startup/import errors. |
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_command.json` | Exact command invoked by the stage. |
-| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_annotated.h5ad` | Clustered AnnData with assignment columns added to `obs` using the `mapmycells_` prefix. |
+| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_umap.png` | Existing Squidpy/Scanpy UMAP coordinates colored by MapMyCells assignment. |
+| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_spatial.png` | Spatial coordinates colored by MapMyCells assignment. |
+| `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_annotated.h5ad` | Clustered AnnData with assignment columns added to `obs` using the `mapmycells_` prefix and mapper metadata in `uns["merxen_mapmycells"]`; plot paths are recorded, but plot images are separate PNGs. |
 | `mapmycells_out/<pair_id>_mapmycells_manifest.json` | Per-pair manifest summarizing references, bootstrap settings, and output paths. |
 
 ## Nextflow reports

@@ -10,11 +10,17 @@ For each platform in a pair:
 1. Read `<sample_id>_clustered.h5ad` from `clustering_squidpy_out/<platform>/`.
 2. Write a MapMyCells query H5AD with raw counts from `layers["counts"]` copied
    into `X`. MapMyCells expects the query cell-by-gene matrix in `X`.
-3. Run `python -m cell_type_mapper.cli.from_specified_markers` locally with the
-   configured marker lookup JSON and precomputed stats HDF5 reference files.
-4. Save the extended JSON, CSV, mapper log, command manifest, query H5AD, and a
-   clustered H5AD annotated with the CSV assignments in `obs` columns prefixed
-   with `mapmycells_`.
+3. Run MapMyCells locally through `python -m merxen.analysis.mapmycells_entrypoint`
+   with the configured marker lookup JSON and precomputed stats HDF5 reference
+   files. The entrypoint forwards to `cell_type_mapper` after applying a narrow
+   compatibility patch that keeps DataLoader batches on host memory until the
+   mapper's GPU correlation code moves arrays to CUDA.
+4. Save the extended JSON, CSV, mapper log, stdout/stderr logs, command
+   manifest, query H5AD, standalone UMAP/spatial PNGs, and a clustered H5AD
+   annotated with MapMyCells assignments in `obs` columns prefixed with
+   `mapmycells_`. The H5AD also records MapMyCells metadata in
+   `uns["merxen_mapmycells"]`, including the paths to the separate PNGs; the
+   plot images themselves are not embedded in the H5AD.
 
 The default `mapmycells_bootstrap_factor` is `0.9` because these data are
 spatial transcriptomics panels where the newer single-cell-oriented lower
@@ -74,8 +80,12 @@ Written under `mapmycells_out/<platform>/`:
 | CSV | `<sample_id>_mapmycells.csv` | Per-cell taxonomy assignments and probabilities. |
 | Extended JSON | `<sample_id>_mapmycells_extended.json` | Full MapMyCells result, config, logs, marker genes, and taxonomy tree. |
 | Log | `<sample_id>_mapmycells.log` | Mapper log output. |
+| Stdout log | `<sample_id>_mapmycells_stdout.log` | Captured process stdout, including the exact command line. |
+| Stderr log | `<sample_id>_mapmycells_stderr.log` | Captured process stderr for startup/import errors and mapper tracebacks. |
 | Command manifest | `<sample_id>_mapmycells_command.json` | Exact command used for the local mapper call. |
-| Annotated AnnData | `<sample_id>_mapmycells_annotated.h5ad` | Clustered AnnData with MapMyCells assignments added to `obs`. |
+| UMAP plot | `<sample_id>_mapmycells_umap.png` | Existing Squidpy/Scanpy UMAP coordinates colored by MapMyCells assignment. |
+| Spatial plot | `<sample_id>_mapmycells_spatial.png` | Spatial coordinates colored by MapMyCells assignment. |
+| Annotated AnnData | `<sample_id>_mapmycells_annotated.h5ad` | Clustered AnnData with MapMyCells assignments added to `obs` and mapper metadata in `uns["merxen_mapmycells"]`. |
 
 The stage also writes `<pair_id>_mapmycells_manifest.json` at the top of
 `mapmycells_out/`.
