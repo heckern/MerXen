@@ -176,7 +176,8 @@ Path: `${outdir}/<pair_id>/mapmycells/`
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_umap.png` | Existing Squidpy/Scanpy UMAP coordinates colored by MapMyCells assignment. |
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_spatial.png` | Spatial coordinates colored by MapMyCells assignment. |
 | `mapmycells_out/<platform>/<pair_id>_<platform>_mapmycells_annotated.h5ad` | Clustered AnnData with assignment columns added to `obs` using the `mapmycells_` prefix and mapper metadata in `uns["merxen_mapmycells"]`; plot paths are recorded, but plot images are separate PNGs. |
-| `mapmycells_out/<pair_id>_mapmycells_manifest.json` | Per-pair manifest summarizing references, bootstrap settings, and output paths. |
+| `mapmycells_out/region_<region_name>/<platform>/<pair_id>_<platform>_mapmycells_*` | Region-specific MapMyCells outputs when `mapmycells_reference_mode` includes `region`; annotated H5AD columns use `mapmycells_region_<region_name>_`. |
+| `mapmycells_out/<pair_id>_mapmycells_manifest.json` | Per-pair manifest summarizing selected reference mode, whole-brain and region references, ROI labels, filtering counts, bootstrap settings, and output paths. |
 
 ## Nextflow reports
 

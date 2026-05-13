@@ -154,11 +154,13 @@ that updated MERSCOPE zarr and keep using
 `${outdir}/${pair_id}/xenium/latest/latest_spatialdata.zarr` as the fixed
 reference.
 
-`mapmycells` is downstream of `clustering_squidpy` and requires local reference
-files. Run through it with `--stop_stage mapmycells` plus
-`--mapmycells_marker_lookup_path` and `--mapmycells_precomputed_stats_path`, or
-rerun only that stage with `--only_stage mapmycells` after clustering outputs
-already exist.
+`mapmycells` is downstream of `clustering_squidpy`. By default it runs both the
+cached whole-brain reference and a configurable Allen WHB region reference
+(`mapmycells_reference_mode=both`). Run through it with `--stop_stage mapmycells`,
+or rerun only that stage with `--only_stage mapmycells` after clustering outputs
+already exist. Whole-brain-only runs require `--mapmycells_marker_lookup_path`
+and `--mapmycells_precomputed_stats_path`; region runs require
+`--mapmycells_region_labels`.
 
 ## Running on a cluster
 

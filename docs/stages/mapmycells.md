@@ -1,7 +1,9 @@
 # MapMyCells
 
 Runs local Allen Institute MapMyCells annotation on the per-platform AnnData
-objects produced by the Squidpy clustering stage.
+objects produced by the Squidpy clustering stage. By default it maps against
+both the Allen Whole Human Brain reference and a configurable strict WHB region
+reference.
 
 ## What it does
 
@@ -11,10 +13,10 @@ For each platform in a pair:
 2. Write a MapMyCells query H5AD with raw counts from `layers["counts"]` copied
    into `X`. MapMyCells expects the query cell-by-gene matrix in `X`.
 3. Run MapMyCells locally through `python -m merxen.analysis.mapmycells_entrypoint`
-   with the configured marker lookup JSON and precomputed stats HDF5 reference
-   files. The entrypoint forwards to `cell_type_mapper` after applying a narrow
-   compatibility patch that keeps DataLoader batches on host memory until the
-   mapper's GPU correlation code moves arrays to CUDA.
+   for the configured reference mode: `whole_brain`, `region`, or `both`.
+   The whole-brain path uses the configured marker lookup JSON and precomputed
+   stats HDF5 files. The region path builds or reuses a strict WHB ROI-specific
+   reference in the durable MapMyCells cache first.
 4. Save the extended JSON, CSV, mapper log, stdout/stderr logs, command
    manifest, query H5AD, standalone UMAP/spatial PNGs, and a clustered H5AD
    annotated with MapMyCells assignments in `obs` columns prefixed with
@@ -25,6 +27,12 @@ For each platform in a pair:
 The default `mapmycells_bootstrap_factor` is `0.9` because these data are
 spatial transcriptomics panels where the newer single-cell-oriented lower
 defaults can be less stable.
+
+For region mode, `mapmycells_region_labels` contains Allen WHB
+`region_of_interest_label` values. The default is
+`["Human A44-A45", "Human A46", "Human A32", "Human ACC"]`, but the
+implementation accepts a list, a JSON list, or a comma-separated string so this
+can be adjusted to different frontal region sets later.
 
 ## Nextflow process
 
@@ -44,8 +52,7 @@ nextflow run workflows/main.nf \
     --samplesheet workflows/samplesheet.csv \
     --outdir ./results \
     --stop_stage mapmycells \
-    --mapmycells_marker_lookup_path /path/to/query_markers.json \
-    --mapmycells_precomputed_stats_path /path/to/precomputed_stats.h5
+    --mapmycells_reference_mode both
 ```
 
 Use `--only_stage mapmycells` to reuse an existing
@@ -60,8 +67,14 @@ Use `--only_stage mapmycells` to reuse an existing
 | `pair_id` | Pair identifier used in output paths. |
 | `output_dir` | Where `mapmycells_out/` is populated. |
 | `samples` | MERSCOPE and Xenium sample configs: `sample_id`, `platform`, `anndata_path`, optional `query_layer`, optional `gene_id_column`, optional `obs_id_column`. |
-| `marker_lookup_path` | JSON marker lookup file downloaded or generated for the reference taxonomy. |
-| `precomputed_stats_path` | HDF5 precomputed stats file for the reference taxonomy. |
+| `reference_mode` | `whole_brain`, `region`, or `both`; default is `both`. |
+| `marker_lookup_path` | Whole-brain JSON marker lookup file. Required only when `reference_mode` includes `whole_brain`. |
+| `precomputed_stats_path` | Whole-brain HDF5 precomputed stats file. Required only when `reference_mode` includes `whole_brain`. |
+| `region_name` / `region_labels` | Short region output name and one or more Allen WHB ROI labels used to build the strict region reference. |
+| `region_cache_dir` | Durable cache for Allen WHB downloads and generated region stats/marker files. |
+| `region_min_cells_per_leaf` | Minimum ROI cells required for a leaf `cluster_alias` to stay in the region taxonomy. |
+| `region_force_rebuild` | Rebuild generated region reference files even if the cache manifest matches. |
+| `region_query_markers_n_per_utility` | Marker count target for region `QueryMarkerRunner`. |
 | `drop_level` | Optional taxonomy level to drop before mapping, such as the Whole Mouse Brain supertype level. |
 | `normalization` | Passed to `type_assignment.normalization`; `raw` means MapMyCells converts query counts internally. |
 | `bootstrap_factor` | Marker downsampling factor per bootstrap iteration. Defaults to `0.9` for spatial data. |
@@ -87,5 +100,11 @@ Written under `mapmycells_out/<platform>/`:
 | Spatial plot | `<sample_id>_mapmycells_spatial.png` | Spatial coordinates colored by MapMyCells assignment. |
 | Annotated AnnData | `<sample_id>_mapmycells_annotated.h5ad` | Clustered AnnData with MapMyCells assignments added to `obs` and mapper metadata in `uns["merxen_mapmycells"]`. |
 
+Region-specific outputs use the same file names under
+`mapmycells_out/region_<mapmycells_region_name>/<platform>/`. Their annotated
+H5AD columns use the prefix `mapmycells_region_<region_name>_`, and metadata is
+stored in `uns["merxen_mapmycells_region_<region_name>"]`.
+
 The stage also writes `<pair_id>_mapmycells_manifest.json` at the top of
-`mapmycells_out/`.
+`mapmycells_out/`, including whole-brain and region reference paths, ROI labels,
+filtering counts, and per-sample outputs.
