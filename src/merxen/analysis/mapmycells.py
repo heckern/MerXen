@@ -11,7 +11,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
 import matplotlib
@@ -807,7 +807,10 @@ def _ensure_whb_reference_inputs(
 
 def _load_abc_manifest() -> dict[str, Any]:
     with urllib.request.urlopen(WHB_MANIFEST_URL) as response:
-        return json.loads(response.read().decode("utf-8"))
+        manifest: object = json.loads(response.read().decode("utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Allen WHB manifest is not a JSON object: {WHB_MANIFEST_URL}")
+    return cast(dict[str, Any], manifest)
 
 
 def _manifest_file_info(manifest: dict[str, Any], *keys: str) -> dict[str, Any]:
