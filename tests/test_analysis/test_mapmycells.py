@@ -22,6 +22,7 @@ from merxen.analysis.mapmycells import (
     choose_mapmycells_assignment_column,
     prepare_mapmycells_query,
     prepare_region_mapmycells_reference,
+    read_mapmycells_extended_qc,
     run_mapmycells,
 )
 from merxen.analysis.mapmycells_gpu_compat import (
@@ -166,6 +167,16 @@ def test_mapmycells_config_validates_reference_modes(tmp_path: Path) -> None:
             region_labels=[],
         )
 
+    plots_only = MapMyCellsConfig(
+        pair_id="PAIR1",
+        output_dir=tmp_path / "mapmycells_out",
+        samples=[],
+        reference_mode="both",
+        region_labels=[],
+        plots_only=True,
+    )
+    assert plots_only.plots_only is True
+
 
 def test_run_mapmycells_writes_annotated_h5ad(
     tmp_path: Path,
@@ -204,11 +215,78 @@ def test_run_mapmycells_writes_annotated_h5ad(
         log_path = Path(command[command.index("--log_path") + 1])
         csv_path.write_text(
             "# metadata = extended.json\n"
-            "cell_id,class_label,class_name,class_bootstrapping_probability\n"
-            "cell1,CLAS_1,Neuron,0.93\n"
-            "cell2,CLAS_2,Astrocyte,0.88\n"
+            "cell_id,supercluster_label,supercluster_name,"
+            "supercluster_bootstrapping_probability,cluster_label,cluster_name,"
+            "cluster_bootstrapping_probability,class_label,class_name,"
+            "class_bootstrapping_probability\n"
+            "cell1,SUPC_1,Neuronal,0.96,CLUS_1,Excitatory,0.93,"
+            "CLAS_1,Neuron,0.93\n"
+            "cell2,SUPC_2,Glial,0.91,CLUS_2,Astro,0.88,"
+            "CLAS_2,Astrocyte,0.88\n"
         )
-        extended_path.write_text(json.dumps({"results": []}) + "\n")
+        extended_path.write_text(
+            json.dumps(
+                {
+                    "taxonomy_tree": {
+                        "hierarchy_mapper": {
+                            "SUPC": "supercluster",
+                            "CLUS": "cluster",
+                        },
+                        "name_mapper": {
+                            "SUPC": {
+                                "SUPC_1": {"name": "Neuronal"},
+                                "SUPC_2": {"name": "Glial"},
+                            },
+                            "CLUS": {
+                                "CLUS_1": {"name": "Excitatory"},
+                                "CLUS_2": {"name": "Astro"},
+                            },
+                        },
+                    },
+                    "results": [
+                        {
+                            "cell_id": "cell1",
+                            "SUPC": {
+                                "assignment": "SUPC_1",
+                                "bootstrapping_probability": 0.96,
+                                "aggregate_probability": 0.96,
+                                "avg_correlation": 0.52,
+                                "directly_assigned": True,
+                                "runner_up_probability": [0.03],
+                            },
+                            "CLUS": {
+                                "assignment": "CLUS_1",
+                                "bootstrapping_probability": 0.93,
+                                "aggregate_probability": 0.89,
+                                "avg_correlation": 0.48,
+                                "directly_assigned": True,
+                                "runner_up_probability": [0.05],
+                            },
+                        },
+                        {
+                            "cell_id": "cell2",
+                            "SUPC": {
+                                "assignment": "SUPC_2",
+                                "bootstrapping_probability": 0.91,
+                                "aggregate_probability": 0.91,
+                                "avg_correlation": 0.45,
+                                "directly_assigned": True,
+                                "runner_up_probability": [0.07],
+                            },
+                            "CLUS": {
+                                "assignment": "CLUS_2",
+                                "bootstrapping_probability": 0.88,
+                                "aggregate_probability": 0.80,
+                                "avg_correlation": 0.41,
+                                "directly_assigned": True,
+                                "runner_up_probability": [0.10],
+                            },
+                        },
+                    ],
+                }
+            )
+            + "\n"
+        )
         log_path.write_text("ok\n")
         return subprocess.CompletedProcess(command, 0)
 
@@ -238,8 +316,19 @@ def test_run_mapmycells_writes_annotated_h5ad(
     stderr_log = whole_brain_results["stderr_log"]
     umap_plot = whole_brain_results["umap_plot"]
     spatial_plot = whole_brain_results["spatial_plot"]
+    umap_cluster_dir = whole_brain_results["umap_cluster_by_supercluster_dir"]
+    quality_scatter_plot = whole_brain_results["quality_scatter_plot"]
+    supercluster_qc_plot = whole_brain_results["supercluster_qc_plot"]
+    cluster_qc_plot = whole_brain_results["cluster_qc_plot"]
+    spatial_supercluster_grid_plot = whole_brain_results[
+        "spatial_supercluster_grid_plot"
+    ]
     annotated = ad.read_h5ad(whole_brain_results["annotated_h5ad"])
     assert list(annotated.obs["mapmycells_class_name"]) == ["Neuron", "Astrocyte"]
+    assert list(annotated.obs["mapmycells_supercluster_name"]) == [
+        "Neuronal",
+        "Glial",
+    ]
     np.testing.assert_allclose(
         annotated.obs["mapmycells_class_bootstrapping_probability"].to_numpy(float),
         [0.93, 0.88],
@@ -247,18 +336,48 @@ def test_run_mapmycells_writes_annotated_h5ad(
     mapmycells_uns = annotated.uns["merxen_mapmycells"]
     assert list(mapmycells_uns["assignment_columns"]) == [
         "mapmycells_cell_id",
+        "mapmycells_supercluster_label",
+        "mapmycells_supercluster_name",
+        "mapmycells_supercluster_bootstrapping_probability",
+        "mapmycells_cluster_label",
+        "mapmycells_cluster_name",
+        "mapmycells_cluster_bootstrapping_probability",
         "mapmycells_class_label",
         "mapmycells_class_name",
         "mapmycells_class_bootstrapping_probability",
     ]
-    assert mapmycells_uns["plot_assignment_column"] == "mapmycells_class_name"
-    assert mapmycells_uns["extended_json_text"] == json.dumps({"results": []}) + "\n"
+    assert mapmycells_uns["plot_assignment_column"] == "mapmycells_cluster_name"
+    assert "quality_scatter" in mapmycells_uns["plot_paths"]
+    assert "umap_cluster_by_supercluster" in mapmycells_uns["plot_paths"]
+    assert "spatial_supercluster_grid" in mapmycells_uns["plot_paths"]
+    assert "taxonomy_tree" in mapmycells_uns["extended_json_text"]
     assert "mapper stdout" in mapmycells_uns["stdout_log_text"]
     assert "mapper stderr" in mapmycells_uns["stderr_log_text"]
     assert "mapper stdout" in stdout_log.read_text()
     assert "mapper stderr" in stderr_log.read_text()
     assert umap_plot.exists()
     assert spatial_plot.exists()
+    assert umap_cluster_dir.exists()
+    assert umap_plot.with_suffix(".pdf").exists()
+    assert spatial_plot.with_suffix(".pdf").exists()
+    assert len(list(umap_cluster_dir.glob("*.png"))) == 2
+    assert len(list(umap_cluster_dir.glob("*.pdf"))) == 2
+    for plot in (
+        quality_scatter_plot,
+        supercluster_qc_plot,
+        cluster_qc_plot,
+        spatial_supercluster_grid_plot,
+    ):
+        assert plot.exists()
+        assert plot.with_suffix(".pdf").exists()
+    extended_qc = read_mapmycells_extended_qc(whole_brain_results["extended_json"])
+    assert set(extended_qc["level_token"]) == {"supercluster", "cluster"}
+    np.testing.assert_allclose(
+        extended_qc.loc[
+            extended_qc["level_token"].eq("cluster"), "runner_up_margin"
+        ].to_numpy(float),
+        [0.88, 0.78],
+    )
     assert (cfg.output_dir / "PAIR1_mapmycells_manifest.json").exists()
 
 
@@ -365,6 +484,132 @@ def test_run_mapmycells_default_both_writes_region_outputs(
         ]
         == "mapmycells_region_frontal_a44_a45_a46_a32_acc_"
     )
+
+
+def test_run_mapmycells_plots_only_reuses_existing_mapper_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plots-only mode should skip mapper execution and reuse CSV/JSON outputs."""
+    input_h5ad = tmp_path / "PAIR1_XENIUM_clustered.h5ad"
+    adata = ad.AnnData(
+        X=np.ones((2, 2), dtype=np.float32),
+        obs=pd.DataFrame(index=["cell1", "cell2"]),
+        var=pd.DataFrame(index=["GeneA", "GeneB"]),
+    )
+    adata.obsm["X_umap"] = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
+    adata.obsm["spatial"] = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32)
+    adata.layers["counts"] = np.array([[3, 0], [0, 4]], dtype=np.int64)
+    adata.write_h5ad(input_h5ad)
+
+    sample_dir = tmp_path / "mapmycells_out" / "region_test" / "xenium"
+    sample_dir.mkdir(parents=True)
+    (sample_dir / "PAIR1_XENIUM_mapmycells.csv").write_text(
+        "cell_id,supercluster_label,supercluster_name,"
+        "supercluster_bootstrapping_probability,cluster_label,cluster_name,"
+        "cluster_bootstrapping_probability\n"
+        "cell1,SUPC_1,Neuronal,0.96,CLUS_1,Excitatory,0.93\n"
+        "cell2,SUPC_2,Glial,0.91,CLUS_2,Astro,0.88\n"
+    )
+    (sample_dir / "PAIR1_XENIUM_mapmycells_extended.json").write_text(
+        json.dumps(
+            {
+                "taxonomy_tree": {
+                    "hierarchy_mapper": {
+                        "SUPC": "supercluster",
+                        "CLUS": "cluster",
+                    }
+                },
+                "results": [
+                    {
+                        "cell_id": "cell1",
+                        "SUPC": {
+                            "assignment": "SUPC_1",
+                            "bootstrapping_probability": 0.96,
+                            "aggregate_probability": 0.96,
+                            "avg_correlation": 0.52,
+                            "directly_assigned": True,
+                            "runner_up_probability": [0.03],
+                        },
+                        "CLUS": {
+                            "assignment": "CLUS_1",
+                            "bootstrapping_probability": 0.93,
+                            "aggregate_probability": 0.89,
+                            "avg_correlation": 0.48,
+                            "directly_assigned": True,
+                            "runner_up_probability": [0.05],
+                        },
+                    },
+                    {
+                        "cell_id": "cell2",
+                        "SUPC": {
+                            "assignment": "SUPC_2",
+                            "bootstrapping_probability": 0.91,
+                            "aggregate_probability": 0.91,
+                            "avg_correlation": 0.45,
+                            "directly_assigned": True,
+                            "runner_up_probability": [0.07],
+                        },
+                        "CLUS": {
+                            "assignment": "CLUS_2",
+                            "bootstrapping_probability": 0.88,
+                            "aggregate_probability": 0.80,
+                            "avg_correlation": 0.41,
+                            "directly_assigned": True,
+                            "runner_up_probability": [0.10],
+                        },
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    def fail_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("MapMyCells subprocess should not run in plots-only mode")
+
+    def fail_region_reference(config: MapMyCellsConfig) -> RegionReferenceArtifacts:
+        raise AssertionError("Region reference should not rebuild in plots-only mode")
+
+    monkeypatch.setattr("merxen.analysis.mapmycells.subprocess.run", fail_run)
+    monkeypatch.setattr(
+        "merxen.analysis.mapmycells.prepare_region_mapmycells_reference",
+        fail_region_reference,
+    )
+
+    cfg = MapMyCellsConfig(
+        pair_id="PAIR1",
+        output_dir=tmp_path / "mapmycells_out",
+        samples=[
+            MapMyCellsSampleConfig(
+                sample_id="PAIR1_XENIUM",
+                platform="XENIUM",
+                anndata_path=input_h5ad,
+            )
+        ],
+        reference_mode="region",
+        region_name="test",
+        region_labels=[],
+        plots_only=True,
+    )
+
+    results = run_mapmycells(cfg)
+
+    region_results = results["PAIR1_XENIUM"]["region_test"]
+    assert not region_results["query_h5ad"].exists()
+    assert region_results["quality_scatter_plot"].exists()
+    assert region_results["umap_cluster_by_supercluster_dir"].exists()
+    assert region_results["supercluster_qc_plot"].exists()
+    assert region_results["cluster_qc_plot"].exists()
+    assert region_results["spatial_supercluster_grid_plot"].exists()
+    annotated = ad.read_h5ad(region_results["annotated_h5ad"])
+    assert list(annotated.obs["mapmycells_region_test_cluster_name"]) == [
+        "Excitatory",
+        "Astro",
+    ]
+    assert annotated.uns["merxen_mapmycells_region_test"]["plot_paths"][
+        "quality_scatter"
+    ].endswith("_mapmycells_quality_scatter.png")
 
 
 def test_choose_mapmycells_assignment_column_prefers_plottable_specificity() -> None:

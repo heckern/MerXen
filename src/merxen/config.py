@@ -337,6 +337,7 @@ class MapMyCellsConfig(BaseModel):
     cloud_safe: bool = False
     flatten: bool = False
     verbose_csv: bool = False
+    plots_only: bool = False
     extra_args: list[str] = Field(default_factory=list)
 
     @field_validator("region_labels", mode="before")
@@ -371,7 +372,7 @@ class MapMyCellsConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_reference_inputs(self: MapMyCellsConfig) -> MapMyCellsConfig:
-        if self.reference_mode in {"whole_brain", "both"}:
+        if not self.plots_only and self.reference_mode in {"whole_brain", "both"}:
             if self.marker_lookup_path is None:
                 raise ValueError(
                     "marker_lookup_path is required when reference_mode includes "
@@ -382,7 +383,11 @@ class MapMyCellsConfig(BaseModel):
                     "precomputed_stats_path is required when reference_mode includes "
                     "whole_brain"
                 )
-        if self.reference_mode in {"region", "both"} and not self.region_labels:
+        if (
+            not self.plots_only
+            and self.reference_mode in {"region", "both"}
+            and not self.region_labels
+        ):
             raise ValueError(
                 "region_labels must contain at least one Allen WHB ROI label when "
                 "reference_mode includes region"
