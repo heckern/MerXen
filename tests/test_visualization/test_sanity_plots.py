@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import geopandas as gpd
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from shapely.geometry import box
@@ -13,6 +15,7 @@ from shapely.geometry import box
 from merxen.visualization.sanity_plots import (
     _prepare_overlay_image,
     plot_pair_sanity_crops,
+    plot_sanity_crop_panel,
     plot_sanity_overlay,
 )
 
@@ -50,6 +53,7 @@ def test_plot_sanity_overlay_writes_file_for_two_channel_image(
 
     assert result == out
     assert out.exists()
+    assert out.with_suffix(".pdf").exists()
 
 
 def test_plot_pair_sanity_crops_writes_file(tmp_path: Path) -> None:
@@ -71,3 +75,51 @@ def test_plot_pair_sanity_crops_writes_file(tmp_path: Path) -> None:
     plot_pair_sanity_crops(merscope, xenium, out)
 
     assert out.exists()
+    assert out.with_suffix(".pdf").exists()
+    assert (tmp_path / "pair_sanity_crop_location.png").exists()
+    assert (tmp_path / "pair_sanity_crop_location.pdf").exists()
+
+
+def test_sanity_crop_panel_uses_clean_labels_and_xenium_scale_bar() -> None:
+    """Paired sanity panels should use clean labels and one Xenium scale bar."""
+    shapes = gpd.GeoDataFrame({"geometry": [box(0.0, 0.0, 300.0, 300.0)]})
+    points = pd.DataFrame({"x": [75.0, 150.0], "y": [75.0, 150.0]})
+    sdata = SimpleNamespace(
+        shapes={
+            "cell_boundaries": shapes,
+            "MOSAIK_proseg": shapes,
+            "MOSAIK_cellpose": shapes,
+            "xenium_cell_boundaries": shapes,
+            "xenium_nucleus": shapes,
+        },
+        points={"transcripts": points},
+        images={},
+    )
+    fig, axes = plt.subplots(1, 2)
+    try:
+        plot_sanity_crop_panel(axes[0], sdata, "MERSCOPE")
+        plot_sanity_crop_panel(axes[1], sdata, "XENIUM")
+
+        assert axes[0].get_title() == "MERSCOPE"
+        assert axes[1].get_title() == "XENIUM"
+        assert len(axes[0].get_xticks()) == 0
+        assert len(axes[0].get_yticks()) == 0
+        assert all(text.get_text() != "100 um" for text in axes[0].texts)
+        assert any(text.get_text() == "100 um" for text in axes[1].texts)
+
+        legend = axes[1].get_legend()
+        assert legend is not None
+        labels = [text.get_text() for text in legend.get_texts()]
+        assert not any("cell_boundaries" in label for label in labels)
+        assert not any("nucleus" in label.lower() for label in labels)
+        assert any(label.startswith("ProSeg") for label in labels)
+        assert any(label.startswith("Cellpose-SAM") for label in labels)
+        assert any(label.startswith("Original segmentation") for label in labels)
+        handle_colors = {
+            mcolors.to_hex(handle.get_color()) for handle in legend.legend_handles
+        }
+        assert "#2ca02c" in handle_colors
+        assert "#9467bd" in handle_colors
+        assert "#ff7f0e" in handle_colors
+    finally:
+        plt.close(fig)

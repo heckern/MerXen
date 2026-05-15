@@ -97,6 +97,9 @@ def visualize_command(config_path: Path) -> None:
     merscope_sdata = sd.read_zarr(cfg.merscope_zarr_path)
     xenium_sdata = sd.read_zarr(cfg.xenium_zarr_path)
     overlay_plot = cfg.output_dir / f"{cfg.pair_id}_sanity_overlay.png"
+    crop_location_plot = overlay_plot.with_name(
+        f"{overlay_plot.stem}_crop_location{overlay_plot.suffix}"
+    )
     plot_pair_sanity_crops(
         merscope_sdata,
         xenium_sdata,
@@ -121,5 +124,6 @@ def visualize_command(config_path: Path) -> None:
     click.echo(f"- {geom_plot}")
     click.echo(f"- {cell_plot}")
     click.echo(f"- {overlay_plot}")
+    click.echo(f"- {crop_location_plot}")
     click.echo(f"- {transcript_overview_plot}")
     click.echo(f"- {assign_plot}")
