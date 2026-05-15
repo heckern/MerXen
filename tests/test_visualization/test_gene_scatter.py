@@ -10,7 +10,7 @@ from merxen.visualization.gene_scatter import plot_gene_scatter
 
 
 def test_plot_gene_scatter_writes_file(tmp_path: Path) -> None:
-    """Scatter plotting should write an output PNG."""
+    """Scatter plotting should write PNG and PDF outputs."""
     df = pd.DataFrame(
         {
             "gene": ["A", "B", "C"],
@@ -21,3 +21,4 @@ def test_plot_gene_scatter_writes_file(tmp_path: Path) -> None:
     out = tmp_path / "scatter.png"
     plot_gene_scatter(df, out, title="Test Plot")
     assert out.exists()
+    assert out.with_suffix(".pdf").exists()

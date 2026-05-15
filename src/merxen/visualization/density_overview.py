@@ -11,6 +11,8 @@ import pandas as pd
 from matplotlib import colors as mcolors
 from tqdm.auto import tqdm
 
+from merxen.plotting import prepare_plot_output, save_figure
+
 MERSCOPE_TRANSCRIPT_COLOR = "#1f77b4"
 XENIUM_TRANSCRIPT_COLOR = "#d62728"
 TRANSCRIPT_OVERVIEW_SAMPLE_N = 250_000
@@ -52,8 +54,7 @@ def plot_density_overview(
     title: str = "Transcript Density",
 ) -> Path:
     """Render a full-field transcript density heatmap from point coordinates."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
     hist, x_edges, y_edges = density_hist2d(
         points_df, x_col=x_col, y_col=y_col, bins=bins
     )
@@ -78,7 +79,7 @@ def plot_density_overview(
     ax.set_ylabel(y_col)
     ax.set_title(title)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=220)
+    save_figure(fig, output_path, dpi=220)
     plt.close(fig)
     return output_path
 
@@ -100,8 +101,7 @@ def plot_transcript_overview(
     heatmap_vmax: float | None = TRANSCRIPT_OVERVIEW_HEATMAP_VMAX,
 ) -> Path:
     """Render the paired 3x2 transcript overview from the MOSAIK notebook."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     merscope_full = _points_bounds_and_sample_xy(
         merscope_sdata,
@@ -257,7 +257,7 @@ def plot_transcript_overview(
     axes[2, 1].set_xlabel("x (microns)")
     axes[2, 1].set_ylabel("y (microns)")
 
-    fig.savefig(output_path, dpi=220)
+    save_figure(fig, output_path, dpi=220)
     plt.close(fig)
     return output_path
 

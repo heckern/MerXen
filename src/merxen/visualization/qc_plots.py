@@ -11,12 +11,18 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.patches import Rectangle
 
+from merxen.plotting import prepare_plot_output, save_figure
+
 PLATFORM_COLORS: dict[str, str] = {
     "MERSCOPE": "#1f77b4",
     "XENIUM": "#d62728",
 }
 PLATFORM_ORDER: tuple[str, str] = ("XENIUM", "MERSCOPE")
 GEOMETRY_METRIC_ORDER: tuple[str, str, str] = ("area", "eccentricity", "aspect_ratio")
+GEOMETRY_METRIC_LIMITS: dict[str, tuple[float, float]] = {
+    "area": (0.0, 750.0),
+    "aspect_ratio": (1.0, 3.0),
+}
 CELL_METRIC_LABELS: dict[str, str] = {
     "transcripts_per_cell": "Transcripts per cell",
     "genes_per_cell": "Genes per cell",
@@ -30,8 +36,7 @@ def plot_geometry_histograms(
     bins: int = 50,
 ) -> Path:
     """Plot geometry metric histograms for area/eccentricity/aspect ratio."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     cols = [
         c for c in ["area", "eccentricity", "aspect_ratio"] if c in geometry_metrics
@@ -43,13 +48,16 @@ def plot_geometry_histograms(
 
     for ax, col in zip(axes, cols, strict=False):
         vals = pd.to_numeric(geometry_metrics[col], errors="coerce").dropna()
-        ax.hist(vals, bins=bins, color="#1f77b4", alpha=0.8)
+        metric_range = GEOMETRY_METRIC_LIMITS.get(col)
+        ax.hist(vals, bins=bins, range=metric_range, color="#1f77b4", alpha=0.8)
+        if metric_range is not None:
+            ax.set_xlim(*metric_range)
         ax.set_title(col.replace("_", " ").title())
         ax.set_xlabel(col)
         ax.set_ylabel("Count")
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
     return output_path
 
@@ -61,8 +69,7 @@ def plot_geometry_histograms_comparison(
     bins: int = 50,
 ) -> Path:
     """Plot overlaid geometry histograms for Xenium and MERSCOPE."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     cols = [
         col
@@ -87,7 +94,11 @@ def plot_geometry_histograms_comparison(
             ax.set_axis_off()
             continue
 
-        bin_edges = np.histogram_bin_edges(combined, bins=bins)
+        metric_range = GEOMETRY_METRIC_LIMITS.get(col)
+        if metric_range is None:
+            bin_edges = np.histogram_bin_edges(combined, bins=bins)
+        else:
+            bin_edges = np.linspace(metric_range[0], metric_range[1], bins + 1)
         for dataset_name in _ordered_dataset_names(values_by_dataset):
             vals = values_by_dataset[dataset_name]
             if vals.size == 0:
@@ -104,10 +115,12 @@ def plot_geometry_histograms_comparison(
         ax.set_title(col.replace("_", " ").title())
         ax.set_xlabel(col)
         ax.set_ylabel("Count")
+        if metric_range is not None:
+            ax.set_xlim(*metric_range)
         ax.legend(frameon=False)
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
     return output_path
 
@@ -117,8 +130,7 @@ def plot_cell_metrics_violin(
     output_path: Path | str,
 ) -> Path:
     """Plot violin distributions of transcripts/cell and genes/cell."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     cols = [c for c in ["transcripts_per_cell", "genes_per_cell"] if c in cell_metrics]
     if not cols:
@@ -133,7 +145,7 @@ def plot_cell_metrics_violin(
     ax.set_ylabel("Value")
     ax.set_title("Per-cell QC Metrics")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
     return output_path
 
@@ -143,8 +155,7 @@ def plot_cell_metrics_violin_comparison(
     output_path: Path | str,
 ) -> Path:
     """Plot side-by-side per-cell transcript and gene violins by platform."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     metrics = [
         metric
@@ -186,7 +197,7 @@ def plot_cell_metrics_violin_comparison(
         ax.set_title(CELL_METRIC_LABELS[metric])
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
     return output_path
 
@@ -199,8 +210,7 @@ def plot_assignment_bar(
     pct_col: str = "pct_assigned",
 ) -> Path:
     """Plot per-dataset assignment rate bar chart."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     if dataset_col not in assignment_summaries or pct_col not in assignment_summaries:
         raise KeyError(
@@ -208,7 +218,19 @@ def plot_assignment_bar(
         )
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    sns.barplot(data=assignment_summaries, x=dataset_col, y=pct_col, ax=ax)
+    order = _ordered_dataset_names_from_series(assignment_summaries[dataset_col])
+    palette = {name: PLATFORM_COLORS.get(name.upper(), "#4b5563") for name in order}
+    sns.barplot(
+        data=assignment_summaries,
+        x=dataset_col,
+        y=pct_col,
+        hue=dataset_col,
+        order=order,
+        hue_order=order,
+        palette=palette,
+        legend=False,
+        ax=ax,
+    )
     ax.set_ylim(0, 100)
     ax.set_ylabel("Assigned Transcripts (%)")
     ax.set_xlabel("Dataset")
@@ -225,7 +247,7 @@ def plot_assignment_bar(
             fontsize=9,
         )
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
     return output_path
 

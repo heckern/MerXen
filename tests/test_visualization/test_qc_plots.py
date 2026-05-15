@@ -16,7 +16,7 @@ from merxen.visualization.qc_plots import (
 
 
 def test_qc_plot_functions_write_files(tmp_path: Path) -> None:
-    """QC plotting helpers should emit image files."""
+    """QC plotting helpers should emit PNG and PDF files."""
     geometry = pd.DataFrame(
         {
             "area": [10.0, 12.0, 9.0],
@@ -42,10 +42,13 @@ def test_qc_plot_functions_write_files(tmp_path: Path) -> None:
     assert geom_out.exists()
     assert violin_out.exists()
     assert bar_out.exists()
+    assert geom_out.with_suffix(".pdf").exists()
+    assert violin_out.with_suffix(".pdf").exists()
+    assert bar_out.with_suffix(".pdf").exists()
 
 
 def test_combined_qc_plot_functions_write_files(tmp_path: Path) -> None:
-    """Combined QC plotting helpers should emit image files."""
+    """Combined QC plotting helpers should emit PNG and PDF files."""
     geometry_by_dataset = {
         "XENIUM": pd.DataFrame(
             {
@@ -79,3 +82,5 @@ def test_combined_qc_plot_functions_write_files(tmp_path: Path) -> None:
 
     assert geom_out.exists()
     assert violin_out.exists()
+    assert geom_out.with_suffix(".pdf").exists()
+    assert violin_out.with_suffix(".pdf").exists()

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import anndata as ad
 import numpy as np
 
-from merxen.alignment.qc import compute_grid_alignment_metrics
+from merxen.alignment.qc import compute_grid_alignment_metrics, plot_alignment_overlay
 from merxen.alignment.transforms import (
     apply_affine_matrix,
     fit_affine_matrix,
@@ -44,3 +46,17 @@ def test_compute_grid_alignment_metrics_returns_expected_keys() -> None:
     assert metrics["n_overlap_grids"] == 4
     assert np.isfinite(metrics["grid_cosine"])
     assert metrics["centroid_assd"] < 0.2
+
+
+def test_plot_alignment_overlay_writes_png_and_pdf(tmp_path: Path) -> None:
+    """Alignment overlay plotting should emit PNG and PDF files."""
+    fixed = ad.AnnData(X=np.ones((3, 2), dtype=np.float32))
+    moving = ad.AnnData(X=np.ones((3, 2), dtype=np.float32))
+    fixed.obsm["spatial"] = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
+    moving.obsm["spatial"] = np.array([[0.0, 0.5], [1.0, 1.5], [2.0, 2.5]])
+    out = tmp_path / "alignment_overlay.png"
+
+    plot_alignment_overlay(fixed, moving, out, title="alignment")
+
+    assert out.exists()
+    assert out.with_suffix(".pdf").exists()

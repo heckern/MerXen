@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from merxen.plotting import prepare_plot_output, save_figure
 from merxen.qc.gene_comparison import fit_linear
 
 
@@ -21,8 +22,7 @@ def plot_gene_scatter(
     log_scale: bool = True,
 ) -> Path:
     """Plot gene-level scatter and fitted line for Xenium vs MERSCOPE counts."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = prepare_plot_output(output_path)
 
     fig, ax = plt.subplots(figsize=(5, 5))
     if df.empty:
@@ -30,7 +30,7 @@ def plot_gene_scatter(
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         fig.tight_layout()
-        fig.savefig(output_path, dpi=220)
+        save_figure(fig, output_path, dpi=220)
         plt.close(fig)
         return output_path
 
@@ -41,7 +41,14 @@ def plot_gene_scatter(
         eps = 1e-12
         x_plot = np.clip(x, eps, None)
         y_plot = np.clip(y, eps, None)
-        ax.scatter(x_plot, y_plot, s=22, alpha=0.75, edgecolor="none")
+        ax.scatter(
+            x_plot,
+            y_plot,
+            s=22,
+            alpha=0.75,
+            edgecolor="none",
+            rasterized=True,
+        )
         ax.set_xscale("log")
         ax.set_yscale("log")
 
@@ -69,7 +76,7 @@ def plot_gene_scatter(
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
     else:
-        ax.scatter(x, y, s=22, alpha=0.75, edgecolor="none")
+        ax.scatter(x, y, s=22, alpha=0.75, edgecolor="none", rasterized=True)
         lo = 0.0
         hi = float(max(x.max(), y.max()))
         ax.plot([lo, hi], [lo, hi], "--", linewidth=1.2, label="y = x")
@@ -97,6 +104,6 @@ def plot_gene_scatter(
     ax.set_title(title)
     ax.legend(loc="lower right")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=220)
+    save_figure(fig, output_path, dpi=220)
     plt.close(fig)
     return output_path

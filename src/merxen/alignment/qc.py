@@ -16,6 +16,7 @@ from scipy.spatial import cKDTree
 
 from merxen.alignment.features import build_alignment_adata, shared_gene_subset
 from merxen.config import AlignmentQCConfig
+from merxen.plotting import prepare_plot_output, save_figure
 
 
 def run_alignment_qc(config: AlignmentQCConfig) -> dict[str, Path]:
@@ -107,19 +108,34 @@ def plot_alignment_overlay(
     title: str,
 ) -> None:
     """Save a centroid overlay plot for aligned sections."""
+    output_path = prepare_plot_output(output_path)
     fixed_xy = np.asarray(fixed.obsm["spatial"], dtype=float)
     moving_xy = np.asarray(moving.obsm["spatial"], dtype=float)
     fig, ax = plt.subplots(figsize=(8, 8))
     if len(fixed_xy):
-        ax.scatter(fixed_xy[:, 0], fixed_xy[:, 1], s=1, alpha=0.35, label="Xenium")
+        ax.scatter(
+            fixed_xy[:, 0],
+            fixed_xy[:, 1],
+            s=1,
+            alpha=0.35,
+            label="Xenium",
+            rasterized=True,
+        )
     if len(moving_xy):
-        ax.scatter(moving_xy[:, 0], moving_xy[:, 1], s=1, alpha=0.35, label="MERSCOPE")
+        ax.scatter(
+            moving_xy[:, 0],
+            moving_xy[:, 1],
+            s=1,
+            alpha=0.35,
+            label="MERSCOPE",
+            rasterized=True,
+        )
     ax.set_title(title)
     ax.set_aspect("equal", adjustable="box")
     ax.invert_yaxis()
     ax.legend(loc="best")
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
+    save_figure(fig, output_path, dpi=200)
     plt.close(fig)
 
 

@@ -24,15 +24,16 @@ def test_density_hist2d_returns_nonempty_histogram() -> None:
 
 
 def test_plot_density_overview_writes_file(tmp_path: Path) -> None:
-    """Density plotting should write an output image."""
+    """Density plotting should write PNG and PDF outputs."""
     points = pd.DataFrame({"x": [0.0, 1.0, 1.5], "y": [0.0, 1.0, 1.5]})
     out = tmp_path / "density.png"
     plot_density_overview(points, out, bins=16)
     assert out.exists()
+    assert out.with_suffix(".pdf").exists()
 
 
 def test_plot_transcript_overview_writes_file(tmp_path: Path) -> None:
-    """Paired transcript overview plotting should write an output image."""
+    """Paired transcript overview plotting should write PNG and PDF outputs."""
     merscope = SimpleNamespace(
         points={
             "transcripts": pd.DataFrame({"x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0]})
@@ -54,3 +55,4 @@ def test_plot_transcript_overview_writes_file(tmp_path: Path) -> None:
     )
 
     assert out.exists()
+    assert out.with_suffix(".pdf").exists()

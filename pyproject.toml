@@ -58,6 +58,9 @@ merxen = "merxen.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+merxen = ["assets/fonts/*.ttf"]
+
 [tool.ruff]
 line-length = 88
 src = ["src"]
