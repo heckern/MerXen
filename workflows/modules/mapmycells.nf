@@ -24,6 +24,9 @@ process MAPMYCELLS {
     def precomputedStatsJson = params.mapmycells_precomputed_stats_path == null ? "null" : JsonOutput.toJson(params.mapmycells_precomputed_stats_path.toString())
     def regionNameJson = params.mapmycells_region_name == null ? JsonOutput.toJson("region") : JsonOutput.toJson(params.mapmycells_region_name.toString())
     def regionCacheDirJson = params.mapmycells_region_cache_dir == null ? "null" : JsonOutput.toJson(params.mapmycells_region_cache_dir.toString())
+    def plotsOnly = params.mapmycells_plots_only == null ? false : params.mapmycells_plots_only.toString().trim().toLowerCase() == "true"
+    def plotsOnlyJson = plotsOnly ? "true" : "false"
+    def publishedMapMyCellsOut = "${params.outdir}/${pair_id}/mapmycells/mapmycells_out"
     def regionLabelValues = []
     if (params.mapmycells_region_labels instanceof List) {
         regionLabelValues = params.mapmycells_region_labels.collect { it.toString() }
@@ -41,6 +44,16 @@ process MAPMYCELLS {
     def regionLabelsJson = JsonOutput.toJson(regionLabelValues)
     """
     set -euo pipefail
+
+    if [[ "${plotsOnlyJson}" == "true" ]]; then
+        previous_mapmycells_out="${publishedMapMyCellsOut}"
+        if [[ ! -d "\${previous_mapmycells_out}" ]]; then
+            echo "Missing existing MapMyCells output directory for plots-only mode: \${previous_mapmycells_out}" >&2
+            exit 1
+        fi
+        rm -rf mapmycells_out
+        cp -a "\${previous_mapmycells_out}" mapmycells_out
+    fi
 
     cat > mapmycells_config.json <<JSON
 {
@@ -84,7 +97,8 @@ process MAPMYCELLS {
   "tmp_dir": ${tmpDirJson},
   "cloud_safe": ${params.mapmycells_cloud_safe},
   "flatten": ${params.mapmycells_flatten},
-  "verbose_csv": ${params.mapmycells_verbose_csv}
+  "verbose_csv": ${params.mapmycells_verbose_csv},
+  "plots_only": ${plotsOnlyJson}
 }
 JSON
 

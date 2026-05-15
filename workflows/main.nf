@@ -202,6 +202,9 @@ workflow {
         def mapMyCellsReferenceMode = params.mapmycells_reference_mode == null
             ? "both"
             : params.mapmycells_reference_mode.toString().trim().toLowerCase()
+        def mapMyCellsPlotsOnly = params.mapmycells_plots_only == null
+            ? false
+            : params.mapmycells_plots_only.toString().trim().toLowerCase() == "true"
         if (!(mapMyCellsReferenceMode in ["whole_brain", "region", "both"])) {
             error(
                 "Invalid MAPMYCELLS --mapmycells_reference_mode " +
@@ -209,15 +212,18 @@ workflow {
                 "whole_brain, region, both"
             )
         }
-        if (mapMyCellsReferenceMode in ["whole_brain", "both"] &&
+        if (!mapMyCellsPlotsOnly &&
+            mapMyCellsReferenceMode in ["whole_brain", "both"] &&
             !params.mapmycells_marker_lookup_path) {
             error "Missing required parameter for MAPMYCELLS: --mapmycells_marker_lookup_path"
         }
-        if (mapMyCellsReferenceMode in ["whole_brain", "both"] &&
+        if (!mapMyCellsPlotsOnly &&
+            mapMyCellsReferenceMode in ["whole_brain", "both"] &&
             !params.mapmycells_precomputed_stats_path) {
             error "Missing required parameter for MAPMYCELLS: --mapmycells_precomputed_stats_path"
         }
-        if (mapMyCellsReferenceMode in ["region", "both"] &&
+        if (!mapMyCellsPlotsOnly &&
+            mapMyCellsReferenceMode in ["region", "both"] &&
             !params.mapmycells_region_labels) {
             error "Missing required parameter for MAPMYCELLS region mode: --mapmycells_region_labels"
         }
