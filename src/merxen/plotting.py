@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sized
 from pathlib import Path
 from typing import Any
 
@@ -102,4 +103,6 @@ def _point_count(collection: PathCollection) -> int:
         offsets = collection.get_offsets()
     except Exception:  # noqa: BLE001
         return 0
-    return int(len(offsets)) if offsets is not None else 0
+    if offsets is None or not isinstance(offsets, Sized):
+        return 0
+    return int(len(offsets))

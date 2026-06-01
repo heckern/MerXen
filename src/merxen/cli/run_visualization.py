@@ -50,7 +50,9 @@ def visualize_command(config_path: Path) -> None:
     assert isinstance(cfg, VisualizationConfig)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
-    samples_by_platform = {sample.platform: sample for sample in cfg.samples}
+    samples_by_platform: dict[str, VisualizationSampleConfig] = {
+        sample.platform: sample for sample in cfg.samples
+    }
     if {"MERSCOPE", "XENIUM"}.issubset(samples_by_platform):
         paths = _write_paired_visualizations(cfg, samples_by_platform)
     else:

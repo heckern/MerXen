@@ -544,7 +544,12 @@ def _choose_shared_aligned_bbox(
         min(float(m_bounds[3]), float(x_bounds[3])),
     )
     if overlap[0] >= overlap[2] or overlap[1] >= overlap[3]:
-        overlap = tuple(float(v) for v in x_bounds)
+        overlap = (
+            float(x_bounds[0]),
+            float(x_bounds[1]),
+            float(x_bounds[2]),
+            float(x_bounds[3]),
+        )
 
     cx = 0.5 * (overlap[0] + overlap[2])
     cy = 0.5 * (overlap[1] + overlap[3])

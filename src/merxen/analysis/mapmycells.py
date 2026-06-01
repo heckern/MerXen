@@ -1530,8 +1530,8 @@ def _mapmycells_cell_ids_for_obs(
             | cell_ids.str.lower().isin({"nan", "none"}),
             fallback,
         )
-        return cell_ids.astype(str).to_numpy()
-    return adata.obs_names.astype(str).to_numpy()
+        return cast(np.ndarray, cell_ids.astype(str).to_numpy())
+    return cast(np.ndarray, adata.obs_names.astype(str).to_numpy())
 
 
 def _mapmycells_cell_complexity(adata: ad.AnnData) -> tuple[str, np.ndarray]:
@@ -1549,9 +1549,9 @@ def _mapmycells_cell_complexity(adata: ad.AnnData) -> tuple[str, np.ndarray]:
 
 def _matrix_nonzero_counts(matrix: Any) -> np.ndarray:
     if sparse.issparse(matrix):
-        return np.asarray(matrix.getnnz(axis=1), dtype=float)
+        return cast(np.ndarray, np.asarray(matrix.getnnz(axis=1), dtype=float))
     array = np.asarray(matrix)
-    return np.count_nonzero(array > 0, axis=1).astype(float)
+    return cast(np.ndarray, np.count_nonzero(array > 0, axis=1).astype(float))
 
 
 def _plot_scatter_metric(
