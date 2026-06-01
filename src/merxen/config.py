@@ -250,13 +250,60 @@ class ComparisonConfig(BaseModel):
     pair_id: str
 
 
+class VisualizationSampleConfig(BaseModel):
+    """One SpatialData sample to include in visualization output."""
+
+    sample_id: str
+    platform: Literal["MERSCOPE", "XENIUM"]
+    zarr_path: Path
+
+
 class VisualizationConfig(BaseModel):
     """Configuration for generating plots."""
 
-    merscope_zarr_path: Path
-    xenium_zarr_path: Path
     output_dir: Path
     pair_id: str
+    samples: list[VisualizationSampleConfig] = Field(default_factory=list)
+    merscope_zarr_path: Path | None = None
+    xenium_zarr_path: Path | None = None
+
+    @model_validator(mode="after")
+    def _populate_legacy_samples(self: VisualizationConfig) -> VisualizationConfig:
+        if not self.samples:
+            legacy_samples = []
+            if self.merscope_zarr_path is not None:
+                legacy_samples.append(
+                    VisualizationSampleConfig(
+                        sample_id=f"{self.pair_id}_MERSCOPE",
+                        platform="MERSCOPE",
+                        zarr_path=self.merscope_zarr_path,
+                    )
+                )
+            if self.xenium_zarr_path is not None:
+                legacy_samples.append(
+                    VisualizationSampleConfig(
+                        sample_id=f"{self.pair_id}_XENIUM",
+                        platform="XENIUM",
+                        zarr_path=self.xenium_zarr_path,
+                    )
+                )
+            self.samples = legacy_samples
+
+        if not self.samples:
+            raise ValueError(
+                "VisualizationConfig requires at least one sample or legacy "
+                "merscope_zarr_path/xenium_zarr_path values."
+            )
+
+        seen_platforms: set[str] = set()
+        for sample in self.samples:
+            if sample.platform in seen_platforms:
+                raise ValueError(
+                    f"VisualizationConfig has duplicate platform {sample.platform!r}"
+                )
+            seen_platforms.add(sample.platform)
+
+        return self
 
 
 class ClusteringSquidpySampleConfig(BaseModel):

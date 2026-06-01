@@ -107,3 +107,55 @@ def plot_gene_scatter(
     save_figure(fig, output_path, dpi=220)
     plt.close(fig)
     return output_path
+
+
+def plot_gene_abundance(
+    df: pd.DataFrame,
+    output_path: Path | str,
+    *,
+    title: str,
+    value_col: str = "normalized",
+    top_n: int = 50,
+    x_label: str = "Normalized transcript fraction",
+    log_scale: bool = True,
+) -> Path:
+    """Plot top per-gene counts or normalized abundance for one dataset."""
+    output_path = prepare_plot_output(output_path)
+
+    fig, ax = plt.subplots(figsize=(7.5, 8.0))
+    if df.empty:
+        ax.set_title(title + " (no genes)")
+        ax.set_xlabel(x_label)
+        fig.tight_layout()
+        save_figure(fig, output_path, dpi=220)
+        plt.close(fig)
+        return output_path
+
+    if "gene" not in df or value_col not in df:
+        raise KeyError(f"Expected columns 'gene' and {value_col!r} in gene summary.")
+
+    plot_df = df[["gene", value_col]].copy()
+    plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
+    plot_df = plot_df[np.isfinite(plot_df[value_col]) & (plot_df[value_col] > 0)]
+    plot_df = plot_df.sort_values(value_col, ascending=False).head(top_n)
+    plot_df = plot_df.iloc[::-1]
+
+    if plot_df.empty:
+        ax.set_title(title + " (no positive values)")
+        ax.set_xlabel(x_label)
+        fig.tight_layout()
+        save_figure(fig, output_path, dpi=220)
+        plt.close(fig)
+        return output_path
+
+    ax.barh(plot_df["gene"].astype(str), plot_df[value_col].to_numpy(float))
+    if log_scale:
+        ax.set_xscale("log")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Gene")
+    ax.set_title(title)
+    ax.grid(axis="x", alpha=0.25)
+    fig.tight_layout()
+    save_figure(fig, output_path, dpi=220)
+    plt.close(fig)
+    return output_path

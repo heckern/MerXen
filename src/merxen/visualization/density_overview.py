@@ -262,6 +262,125 @@ def plot_transcript_overview(
     return output_path
 
 
+def plot_single_transcript_overview(
+    sdata_obj: Any,
+    dataset_name: str,
+    output_path: Path | str,
+    *,
+    sample_n: int = TRANSCRIPT_OVERVIEW_SAMPLE_N,
+    crop_sample_n: int = TRANSCRIPT_OVERVIEW_CROP_SAMPLE_N,
+    random_state: int = TRANSCRIPT_OVERVIEW_RANDOM_STATE,
+    point_size: float = TRANSCRIPT_OVERVIEW_POINT_SIZE,
+    crop_bbox_um: tuple[float, float, float, float] | None = None,
+    crop_size_um: float = 2_000.0,
+    heatmap_bins: int = TRANSCRIPT_OVERVIEW_HEATMAP_BINS,
+    heatmap_cmap: str = TRANSCRIPT_OVERVIEW_HEATMAP_CMAP,
+    heatmap_log: bool = TRANSCRIPT_OVERVIEW_HEATMAP_LOG,
+    heatmap_vmin: float | None = TRANSCRIPT_OVERVIEW_HEATMAP_VMIN,
+    heatmap_vmax: float | None = TRANSCRIPT_OVERVIEW_HEATMAP_VMAX,
+) -> Path:
+    """Render a one-dataset transcript density, full scatter, and crop overview."""
+    output_path = prepare_plot_output(output_path)
+    dataset_label = str(dataset_name).upper()
+    point_color = (
+        MERSCOPE_TRANSCRIPT_COLOR
+        if dataset_label == "MERSCOPE"
+        else XENIUM_TRANSCRIPT_COLOR
+    )
+
+    full = _points_bounds_and_sample_xy(
+        sdata_obj,
+        sample_n=sample_n,
+        random_state=random_state,
+    )
+    cx, cy, span = _center_and_span(full["bounds"])
+    span = max(float(span), 1.0)
+    half = 0.5 * span
+    x_range = (cx - half, cx + half)
+    y_range = (cy - half, cy + half)
+
+    if crop_bbox_um is None:
+        crop_bbox_um = _centered_bbox(full["bounds"], crop_size_um)
+    crop = _points_sample_xy_in_bbox(
+        sdata_obj,
+        bbox=crop_bbox_um,
+        sample_n=crop_sample_n,
+        random_state=random_state,
+    )
+
+    heat = _hist2d_all_points_streaming(
+        sdata_obj,
+        x_range=x_range,
+        y_range=y_range,
+        bins=heatmap_bins,
+        dataset_name=dataset_label,
+    )
+    heat_values = heat["hist"].T
+    norm, heat_show, _ = _build_heatmap_display(
+        heat_values,
+        heat_values,
+        log_scale=heatmap_log,
+        vmin=heatmap_vmin,
+        vmax=heatmap_vmax,
+    )
+
+    fig, axes = plt.subplots(3, 1, figsize=(8, 18), constrained_layout=True)
+    im = axes[0].imshow(
+        heat_show,
+        origin="lower",
+        extent=(x_range[0], x_range[1], y_range[0], y_range[1]),
+        cmap=heatmap_cmap,
+        norm=norm,
+        aspect="equal",
+    )
+    axes[0].set_title(f"{dataset_label} transcript density (all transcripts)")
+    axes[0].set_xlabel("x (microns)")
+    axes[0].set_ylabel("y (microns)")
+    label_suffix = " (log scale)" if heatmap_log else ""
+    fig.colorbar(im, ax=axes[0], shrink=0.85).set_label(
+        f"Transcript count per bin{label_suffix}"
+    )
+
+    full_df = full["sampled"]
+    axes[1].scatter(
+        full_df["x_um"],
+        full_df["y_um"],
+        s=point_size,
+        c=point_color,
+        alpha=0.15,
+        rasterized=True,
+    )
+    axes[1].set_xlim(x_range)
+    axes[1].set_ylim(y_range)
+    axes[1].set_aspect("equal")
+    axes[1].set_title(f"{dataset_label} transcripts (subsample, full)")
+    axes[1].set_xlabel("x (microns)")
+    axes[1].set_ylabel("y (microns)")
+
+    x0, y0, x1, y1 = crop_bbox_um
+    crop_df = crop["sampled"]
+    axes[2].scatter(
+        crop_df["x_um"],
+        crop_df["y_um"],
+        s=point_size,
+        c=point_color,
+        alpha=0.08,
+        rasterized=True,
+    )
+    axes[2].set_xlim(x0, x1)
+    axes[2].set_ylim(y0, y1)
+    axes[2].set_aspect("equal")
+    axes[2].set_title(
+        f"{dataset_label} crop x=[{x0:.0f},{x1:.0f}], y=[{y0:.0f},{y1:.0f}]"
+    )
+    axes[2].set_xlabel("x (microns)")
+    axes[2].set_ylabel("y (microns)")
+
+    save_figure(fig, output_path, dpi=220)
+    plt.close(fig)
+    return output_path
+
+
 def _resolve_points_xy_cols(
     sdata_obj: Any,
 ) -> tuple[str, Any, str, str]:
@@ -476,6 +595,18 @@ def _center_and_span(
     cy = 0.5 * (miny + maxy)
     span = max(maxx - minx, maxy - miny)
     return cx, cy, span
+
+
+def _centered_bbox(
+    bounds: tuple[float, float, float, float],
+    size_um: float,
+) -> tuple[float, float, float, float]:
+    minx, miny, maxx, maxy = bounds
+    cx = 0.5 * (minx + maxx)
+    cy = 0.5 * (miny + maxy)
+    size = max(1.0, min(float(size_um), max(maxx - minx, maxy - miny)))
+    half = 0.5 * size
+    return (cx - half, cy - half, cx + half, cy + half)
 
 
 def _reference_points_key(sdata_obj: Any) -> str:

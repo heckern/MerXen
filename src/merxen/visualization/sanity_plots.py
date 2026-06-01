@@ -189,6 +189,52 @@ def plot_pair_sanity_crops(
     return output_path
 
 
+def plot_single_sanity_crop(
+    sdata_obj: Any,
+    dataset_name: str,
+    output_path: Path | str,
+    *,
+    zarr_path: Path | str | None = None,
+    crop_size_um: float = SANITY_CROP_SIZE_UM,
+    assignment_shape_key: str | None = SANITY_ASSIGNMENT_SHAPE_KEY,
+) -> Path:
+    """Plot one MOSAIK-style sanity crop for a single platform dataset."""
+    output_path = prepare_plot_output(output_path)
+    prefer_aligned = _has_aligned_vectors(sdata_obj)
+    crop_bbox, _ = _choose_crop_bbox(
+        sdata_obj,
+        size_um=crop_size_um,
+        center_xy=None,
+        prefer_aligned=prefer_aligned,
+    )
+
+    fig, ax = plt.subplots(1, 1, figsize=(8.5, 8), constrained_layout=True)
+    plot_sanity_crop_panel(
+        ax,
+        sdata_obj,
+        dataset_name,
+        crop_bbox=crop_bbox,
+        crop_size_um=crop_size_um,
+        assignment_shape_key=assignment_shape_key,
+        prefer_aligned_vectors=prefer_aligned,
+        zarr_path=zarr_path,
+    )
+    save_figure(fig, output_path, dpi=220)
+    plt.close(fig)
+
+    crop_location_path = output_path.with_name(
+        f"{output_path.stem}_crop_location{output_path.suffix}"
+    )
+    plot_single_crop_location(
+        sdata_obj,
+        dataset_name,
+        crop_location_path,
+        crop_bbox=crop_bbox,
+        prefer_aligned_vectors=prefer_aligned,
+    )
+    return output_path
+
+
 def plot_sanity_crop_panel(
     ax: plt.Axes,
     sdata_obj: Any,
@@ -381,6 +427,33 @@ def plot_pair_crop_location(
         xenium_plan.display_bbox,
         prefer_aligned_vectors=False,
         dataset_name="XENIUM",
+    )
+    save_figure(fig, output_path, dpi=200)
+    plt.close(fig)
+    return output_path
+
+
+def plot_single_crop_location(
+    sdata_obj: Any,
+    dataset_name: str,
+    output_path: Path | str,
+    *,
+    crop_bbox: tuple[float, float, float, float],
+    prefer_aligned_vectors: bool,
+) -> Path:
+    """Plot the crop rectangle used for a single-platform sanity crop."""
+    output_path = prepare_plot_output(output_path)
+    label = str(dataset_name).upper()
+    title = f"{label} {'aligned' if prefer_aligned_vectors else 'crop location'}"
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 5.5), constrained_layout=True)
+    _plot_crop_location_panel(
+        ax,
+        sdata_obj,
+        title,
+        crop_bbox,
+        prefer_aligned_vectors=prefer_aligned_vectors,
+        dataset_name=label,
     )
     save_figure(fig, output_path, dpi=200)
     plt.close(fig)

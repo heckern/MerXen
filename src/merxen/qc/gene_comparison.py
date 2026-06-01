@@ -184,6 +184,42 @@ def compute_gene_comparison(
     }
 
 
+def gene_summary_df(counts: pd.Series, normalized: pd.Series) -> pd.DataFrame:
+    """Construct a per-gene single-dataset summary DataFrame."""
+    genes = sorted(set(counts.index.astype(str)) | set(normalized.index.astype(str)))
+    return pd.DataFrame(
+        {
+            "gene": genes,
+            "count": counts.reindex(genes).fillna(0.0).to_numpy(float),
+            "normalized": normalized.reindex(genes).fillna(0.0).to_numpy(float),
+        }
+    )
+
+
+def compute_gene_summary(sdata_obj: Any, dataset_name: str) -> dict[str, Any]:
+    """Compute single-dataset total and assigned per-gene count summaries."""
+    logger.info("[%s Gene Summary] Computing per-gene totals", dataset_name)
+    table = sdata_obj.tables["table"]
+
+    total_all = gene_totals_from_points(sdata_obj, assigned_only=False)
+    assigned_all = gene_totals_from_table(table)
+
+    total = apply_dataset_filter(total_all, dataset_name)
+    assigned = apply_dataset_filter(assigned_all, dataset_name)
+
+    total_norm, total_sum = normalize_counts(total)
+    assigned_norm, assigned_sum = normalize_counts(assigned)
+
+    return {
+        "total_counts_df": gene_summary_df(total, total_norm),
+        "assigned_counts_df": gene_summary_df(assigned, assigned_norm),
+        "totals": {
+            "total_sum": total_sum,
+            "assigned_sum": assigned_sum,
+        },
+    }
+
+
 def compute_gene_comparison_from_paths(
     xenium_zarr_path: Path | str,
     merscope_zarr_path: Path | str,
@@ -194,3 +230,12 @@ def compute_gene_comparison_from_paths(
     return compute_gene_comparison(
         xenium_sdata=xenium_sdata, merscope_sdata=merscope_sdata
     )
+
+
+def compute_gene_summary_from_path(
+    zarr_path: Path | str,
+    dataset_name: str,
+) -> dict[str, Any]:
+    """Load one SpatialData zarr and compute single-dataset gene summaries."""
+    sdata_obj = sd.read_zarr(Path(zarr_path))
+    return compute_gene_summary(sdata_obj=sdata_obj, dataset_name=dataset_name)
