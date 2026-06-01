@@ -17,6 +17,7 @@ from merxen.visualization.sanity_plots import (
     plot_pair_sanity_crops,
     plot_sanity_crop_panel,
     plot_sanity_overlay,
+    plot_single_sanity_crop,
 )
 
 
@@ -78,6 +79,25 @@ def test_plot_pair_sanity_crops_writes_file(tmp_path: Path) -> None:
     assert out.with_suffix(".pdf").exists()
     assert (tmp_path / "pair_sanity_crop_location.png").exists()
     assert (tmp_path / "pair_sanity_crop_location.pdf").exists()
+
+
+def test_plot_single_sanity_crop_writes_file(tmp_path: Path) -> None:
+    """Single-platform sanity crop plotting should write crop and location files."""
+    shapes = gpd.GeoDataFrame({"geometry": [box(0.0, 0.0, 10.0, 10.0)]})
+    points = pd.DataFrame({"x": [1.0, 5.0], "y": [1.0, 5.0]})
+    sdata = SimpleNamespace(
+        shapes={"MOSAIK_proseg": shapes},
+        points={"transcripts": points},
+        images={},
+    )
+    out = tmp_path / "single_sanity.png"
+
+    plot_single_sanity_crop(sdata, "MERSCOPE", out)
+
+    assert out.exists()
+    assert out.with_suffix(".pdf").exists()
+    assert (tmp_path / "single_sanity_crop_location.png").exists()
+    assert (tmp_path / "single_sanity_crop_location.pdf").exists()
 
 
 def test_sanity_crop_panel_uses_clean_labels_and_xenium_scale_bar() -> None:

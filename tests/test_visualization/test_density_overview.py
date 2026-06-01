@@ -10,6 +10,7 @@ import pandas as pd
 from merxen.visualization.density_overview import (
     density_hist2d,
     plot_density_overview,
+    plot_single_transcript_overview,
     plot_transcript_overview,
 )
 
@@ -49,6 +50,27 @@ def test_plot_transcript_overview_writes_file(tmp_path: Path) -> None:
     plot_transcript_overview(
         merscope,
         xenium,
+        out,
+        crop_bbox_um=(0.0, 0.0, 2.0, 2.0),
+        heatmap_bins=8,
+    )
+
+    assert out.exists()
+    assert out.with_suffix(".pdf").exists()
+
+
+def test_plot_single_transcript_overview_writes_file(tmp_path: Path) -> None:
+    """Single-platform transcript overview plotting should write outputs."""
+    sdata = SimpleNamespace(
+        points={
+            "transcripts": pd.DataFrame({"x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0]})
+        }
+    )
+    out = tmp_path / "single_transcript_overview.png"
+
+    plot_single_transcript_overview(
+        sdata,
+        "MERSCOPE",
         out,
         crop_bbox_um=(0.0, 0.0, 2.0, 2.0),
         heatmap_bins=8,

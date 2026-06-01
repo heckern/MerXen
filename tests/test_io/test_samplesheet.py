@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from merxen.io.samplesheet import parse_samplesheet, validate_samplesheet
+from merxen.io.samplesheet import (
+    parse_samplesheet,
+    required_platforms_for_mode,
+    validate_samplesheet,
+)
 
 
 def test_parse_samplesheet_supports_raw_dirs_and_cached_spatialdata(
@@ -87,3 +91,40 @@ def test_validate_samplesheet_requires_platform_source_or_cache(
 
     with pytest.raises(FileNotFoundError, match="Provide either merscope_dir"):
         validate_samplesheet(pairs)
+
+
+def test_validate_samplesheet_allows_merscope_only_mode(tmp_path: Path) -> None:
+    """MERSCOPE-only mode should not require Xenium input columns."""
+    merscope_dir = tmp_path / "merscope_raw"
+    merscope_dir.mkdir()
+    csv_path = tmp_path / "merscope_only.csv"
+    csv_path.write_text(f"pair_id,merscope_dir,xenium_dir\nP1,{merscope_dir},\n")
+
+    pairs = parse_samplesheet(csv_path)
+
+    validate_samplesheet(pairs, analysis_mode="merscope")
+
+
+def test_validate_samplesheet_allows_xenium_only_mode_with_blank_merscope_fields(
+    tmp_path: Path,
+) -> None:
+    """Xenium-only mode should tolerate blank MERSCOPE-specific optional fields."""
+    xenium_dir = tmp_path / "xenium_raw"
+    xenium_dir.mkdir()
+    csv_path = tmp_path / "xenium_only.csv"
+    csv_path.write_text(
+        "pair_id,merscope_dir,merscope_z_range,merscope_voxel_layers,xenium_dir\n"
+        f"P1,,,,{xenium_dir}\n"
+    )
+
+    pairs = parse_samplesheet(csv_path)
+
+    assert pairs[0].merscope_z_range == (0, 6)
+    assert pairs[0].merscope_voxel_layers == 7
+    validate_samplesheet(pairs, analysis_mode="xenium")
+
+
+def test_required_platforms_for_mode_rejects_unknown_mode() -> None:
+    """Unknown analysis modes should fail with a clear validation error."""
+    with pytest.raises(ValueError, match="Unknown analysis_mode"):
+        required_platforms_for_mode("other")
