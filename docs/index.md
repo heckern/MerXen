@@ -1,10 +1,10 @@
 # MerXen Documentation
 
-MerXen pre-processes, segments, and comparatively analyses paired MERSCOPE and
-Xenium spatial transcriptomics datasets. For every pair of adjacent human
-brain tissue sections — one run on Vizgen MERSCOPE and one on 10x Xenium with
-the same 300-gene custom panel — MerXen coerces both platforms through an
-identical downstream pipeline so they can be compared directly.
+MerXen pre-processes, segments, and analyses MERSCOPE and Xenium spatial
+transcriptomics datasets. By default, every row is a paired adjacent-section
+experiment — one Vizgen MERSCOPE and one 10x Xenium run with the same 300-gene
+custom panel — but the workflow can also run MERSCOPE-only or Xenium-only
+analyses with the same downstream stages that do not require both platforms.
 
 The pipeline is orchestrated by [Nextflow](https://www.nextflow.io/), with all
 scientific logic living in the installable Python package `merxen`.

@@ -1,15 +1,15 @@
 # MerXen
 
-Pre-processing, segmentation, and comparative analysis of paired MERSCOPE and Xenium spatial transcriptomics datasets.
+Pre-processing, segmentation, and comparative analysis of MERSCOPE and Xenium spatial transcriptomics datasets, either as paired sections or as single-platform runs.
 
 ## What it does
 
-MerXen takes paired spatial transcriptomics datasets (one MERSCOPE, one Xenium per tissue section pair) and runs a standardised pipeline:
+MerXen takes spatial transcriptomics datasets and runs a standardised pipeline. By default, each samplesheet row is treated as a paired experiment (one MERSCOPE, one Xenium per tissue section pair), but the same workflow can run MERSCOPE-only or Xenium-only analyses with `--analysis_mode merscope` or `--analysis_mode xenium`.
 
 1. **SpatialData build** — Builds platform-specific SpatialData zarrs from raw MERSCOPE and Xenium output folders
 2. **Cell segmentation** — Cellpose-SAM image-based segmentation followed by ProSeg transcript-based refinement
 3. **Section alignment** — Optionally registers paired adjacent sections to a Xenium reference coordinate system with Spateo
-4. **Comparative analysis** — QC metrics, gene-level comparison, visualisation, first-pass Scanpy/Squidpy clustering, and optional local MapMyCells cell type assignment across platforms
+4. **Analysis and visualisation** — QC metrics, paired gene-level comparison when both platforms are present, single-platform or paired visualisation, first-pass Scanpy/Squidpy clustering, and optional local MapMyCells cell type assignment
 
 The workflow is orchestrated by Nextflow to process multiple sample pairs with logging and reproducibility.
 
@@ -82,6 +82,9 @@ See [.env.example](.env.example) for required variables (ProSeg binary path, out
 ```bash
 # Run via Nextflow with a samplesheet
 nextflow run workflows/main.nf --samplesheet samples.csv --outdir ./results --proseg_binary /path/to/proseg
+
+# Run a single-platform workflow
+nextflow run workflows/main.nf --samplesheet samples.csv --analysis_mode xenium --outdir ./results --proseg_binary /path/to/proseg
 ```
 
 A template samplesheet is provided at [workflows/samplesheet.example.csv](workflows/samplesheet.example.csv). Copy and edit this file with your dataset-specific paths before running the workflow.
@@ -90,7 +93,7 @@ A template samplesheet is provided at [workflows/samplesheet.example.csv](workfl
 cp workflows/samplesheet.example.csv workflows/samplesheet.csv
 ```
 
-The samplesheet points at raw platform folders with optional reusable SpatialData cache paths (`merscope_dir`, `merscope_spatialdata_path`, `xenium_dir`, `xenium_spatialdata_path`, plus per-platform channel, z-range, and voxel-layer settings). The full schema, validation rules, and worked examples are documented in [docs/samplesheet.md](docs/samplesheet.md). For Nextflow invocation options — resuming, stage-range runs, force rebuild, parameter overrides, cluster execution — see [docs/running-the-pipeline.md](docs/running-the-pipeline.md).
+The samplesheet points at raw platform folders with optional reusable SpatialData cache paths (`merscope_dir`, `merscope_spatialdata_path`, `xenium_dir`, `xenium_spatialdata_path`, plus per-platform channel, z-range, and voxel-layer settings). In single-platform mode, only the selected platform's source/cache columns are required. The full schema, validation rules, and worked examples are documented in [docs/samplesheet.md](docs/samplesheet.md). For Nextflow invocation options — analysis mode, resuming, stage-range runs, force rebuild, parameter overrides, cluster execution — see [docs/running-the-pipeline.md](docs/running-the-pipeline.md).
 
 ## Running tests
 

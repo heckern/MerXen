@@ -73,7 +73,7 @@ Use `--only_stage mapmycells` to reuse an existing
 |-------|-------------|
 | `pair_id` | Pair identifier used in output paths. |
 | `output_dir` | Where `mapmycells_out/` is populated. |
-| `samples` | MERSCOPE and Xenium sample configs: `sample_id`, `platform`, `anndata_path`, optional `query_layer`, optional `gene_id_column`, optional `obs_id_column`. |
+| `samples` | One or two sample configs: `sample_id`, `platform`, `anndata_path`, optional `query_layer`, optional `gene_id_column`, optional `obs_id_column`. |
 | `reference_mode` | `whole_brain`, `region`, or `both`; default is `both`. |
 | `marker_lookup_path` | Whole-brain JSON marker lookup file. Required only when `reference_mode` includes `whole_brain`. |
 | `precomputed_stats_path` | Whole-brain HDF5 precomputed stats file. Required only when `reference_mode` includes `whole_brain`. |

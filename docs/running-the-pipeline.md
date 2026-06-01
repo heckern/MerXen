@@ -26,8 +26,9 @@ Common optional parameters:
 |------|-------------|
 | `--outdir` | Where all outputs are published. Defaults to `./results`. |
 | `--proseg_binary` | Absolute path to the ProSeg binary. Required when `SEGMENT` runs. |
+| `--analysis_mode` | `paired` (default), `merscope`, or `xenium`. Controls which platform columns are required and which stages are active. |
 | `--force_spatialdata_build` | Force rebuilding the SpatialData zarr even when a cached one exists. Defaults to `false`. |
-| `--enable_alignment` | Run optional Spateo alignment and alignment QC before comparison. Defaults to `false`. |
+| `--enable_alignment` | Run optional Spateo alignment and alignment QC before comparison. Paired mode only. Defaults to `false`. |
 | `--start_stage` / `--stop_stage` | Run a contiguous stage range. Defaults to the full pipeline. |
 | `--only_stage` | Convenience alias for setting `start_stage` and `stop_stage` to the same stage. |
 
@@ -42,6 +43,30 @@ SpatialData compatibility:
 pip install spateo-release==1.1.1
 pip install "anndata>=0.12.10"
 ```
+
+## Analysis mode
+
+`--analysis_mode paired` is the default and expects both MERSCOPE and Xenium
+inputs for every samplesheet row. It enables the paired-only stages:
+`align`, `align_qc`, and `compare`.
+
+Use single-platform mode when a row has only one dataset:
+
+```bash
+nextflow run workflows/main.nf \
+    --samplesheet workflows/xenium_only.csv \
+    --analysis_mode xenium \
+    --outdir ./results \
+    --proseg_binary /path/to/proseg
+```
+
+In `--analysis_mode merscope` or `--analysis_mode xenium`, the workflow runs
+`build_spatialdata → segment → enrich → qc → visualize → clustering_squidpy`
+for the selected platform. Visualization writes single-dataset alternatives
+for paired plots, including gene-abundance, one-platform transcript overview,
+and one-platform sanity crop outputs. `mapmycells` remains available after
+clustering. Alignment and comparison are rejected in single-platform mode
+because they require both datasets.
 
 ## Resuming a run
 
@@ -61,8 +86,8 @@ Completed stages are skipped; only the failed stage and its downstreams re-run.
 ## Forcing a full rebuild
 
 - `--force_spatialdata_build true` — ignore cached SpatialData zarrs and
-  rebuild from raw exports. Requires `merscope_dir` / `xenium_dir` to be set
-  in the samplesheet.
+  rebuild from raw exports. Requires raw-dir columns for the active
+  platform(s) to be set in the samplesheet.
 - `nextflow run ...` without `-resume` — blow away Nextflow's cache and
   re-run every process. The `work/` directory will grow; clean it with
   `rm -rf work/` when you're done.
@@ -110,7 +135,8 @@ Accepted stages are:
 
 `build_spatialdata`, `segment`, `enrich`, `qc`, `align`, `align_qc`, `compare`,
 `visualize`, `clustering_squidpy`, and `mapmycells`. Alignment stages are only
-active when `--enable_alignment true` is set.
+active when `--enable_alignment true` is set, and `align`, `align_qc`, and
+`compare` are active only in `--analysis_mode paired`.
 
 Run one stage:
 
@@ -147,6 +173,8 @@ Starting at `segment` still needs `--proseg_binary`; starting later does not.
 Starting at `compare`, `visualize`, or `clustering_squidpy` with
 `--enable_alignment false` reads
 `${outdir}/${pair_id}/{merscope,xenium}/latest/latest_spatialdata.zarr`.
+In single-platform mode, starting at `visualize` or `clustering_squidpy` reads
+only `${outdir}/${pair_id}/<selected-platform>/latest/latest_spatialdata.zarr`.
 With `--enable_alignment true`, `ALIGN` updates
 `${outdir}/${pair_id}/merscope/latest/latest_spatialdata.zarr` in place with
 alignment metadata and `*_aligned_nonrigid` vector elements. Later stages read

@@ -156,7 +156,7 @@ Details: [Stage 5 — Comparison](stages/comparison.md).
 
 ## `merxen visualize`
 
-Generate visualization artifacts for a paired dataset comparison.
+Generate visualization artifacts for a paired or single-platform dataset.
 
 ```bash
 merxen visualize --config visualize_config.json

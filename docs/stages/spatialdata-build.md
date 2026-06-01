@@ -16,7 +16,8 @@ archive. All downstream stages consume this zarr.
 ## Nextflow process
 
 [`BUILD_SPATIALDATA`](../../workflows/modules/spatialdata_build.nf) — one
-instance per dataset (MERSCOPE + Xenium, so two per samplesheet row).
+instance per active dataset. Paired mode creates MERSCOPE + Xenium tasks; a
+single-platform mode creates one task per samplesheet row.
 
 - **Input:** `tuple(key, pair_id, platform, build_config_json)`.
 - **CLI:** `merxen build-spatialdata --config build_config.json [--force-rerun]`.
@@ -52,8 +53,9 @@ instance per dataset (MERSCOPE + Xenium, so two per samplesheet row).
 
 ## Walkthrough
 
-A row with `pair_id=EXAMPLE01` fans out to **two** `BUILD_SPATIALDATA` tasks,
-one per platform:
+A paired row with `pair_id=EXAMPLE01` fans out to **two**
+`BUILD_SPATIALDATA` tasks, one per platform. In `--analysis_mode merscope` or
+`--analysis_mode xenium`, it fans out only to the selected platform:
 
 1. Nextflow composes a `build_config.json` with `platform` set and
    `input_path` pointing at the samplesheet value.

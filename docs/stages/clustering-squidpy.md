@@ -7,7 +7,7 @@ been written.
 
 ## What it does
 
-For each platform in a pair:
+For each active platform in the run:
 
 1. Open the latest SpatialData zarr and copy the selected AnnData table.
 2. Populate `.obsm["spatial"]` from the matching shape centroids when needed.
@@ -38,9 +38,10 @@ For each platform in a pair:
 [`CLUSTERING_SQUIDPY`](../../workflows/modules/clustering_squidpy.nf) — one
 instance per `pair_id`.
 
-- **Input:** `tuple(pair_id, merscope_zarr, xenium_zarr)`.
+- **Input:** `tuple(pair_id, samples_json)`, where `samples_json` has one or
+  two `{sample_id, platform, zarr_path}` records.
 - **CLI:** `merxen clustering-squidpy --config clustering_squidpy_config.json`.
-- **Output:** `tuple(pair_id, clustering_squidpy_out/)`.
+- **Output:** `tuple(pair_id, samples_json, clustering_squidpy_out/)`.
 - **publishDir:** `${outdir}/${pair_id}/clustering_squidpy/` (copy mode).
 
 When `VISUALIZE` is also active, the workflow joins on its completion channel
@@ -67,7 +68,7 @@ published latest zarrs directly.
 |-------|-------------|
 | `pair_id` | Pair identifier used in output paths. |
 | `output_dir` | Where `clustering_squidpy_out/` is populated. |
-| `samples` | MERSCOPE and Xenium sample configs: `sample_id`, `platform`, `zarr_path`, optional `table_key`, optional `shape_key`. |
+| `samples` | One or two sample configs: `sample_id`, `platform`, `zarr_path`, optional `table_key`, optional `shape_key`. |
 | `drop_control_features` | Remove blank/negative/control-like variables before clustering. |
 | `min_counts` / `min_cells` | Gentle cell and gene filtering thresholds. |
 | `normalize_target_sum` | Optional `scanpy.pp.normalize_total` target sum. `null` uses Scanpy's default. |

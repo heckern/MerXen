@@ -1,8 +1,9 @@
 # Stage 5 — Comparison
 
-Cross-platform gene-level comparison. Runs once per pair, after both MERSCOPE
-and Xenium have passed QC, and quantifies how well the two platforms agree on
-the same 300-gene panel.
+Cross-platform gene-level comparison. Runs once per pair in
+`--analysis_mode paired`, after both MERSCOPE and Xenium have passed QC, and
+quantifies how well the two platforms agree on the same 300-gene panel.
+Single-platform runs skip this stage.
 
 ## What it does
 

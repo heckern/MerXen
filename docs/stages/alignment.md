@@ -1,7 +1,7 @@
 # Section alignment
 
 > **Status: implemented as an optional stage.** Enable with
-> `--enable_alignment true` after installing Spateo.
+> `--analysis_mode paired --enable_alignment true` after installing Spateo.
 
 ## Intent
 
@@ -30,15 +30,17 @@ alignment coordinate tables are retained for inspection.
 ## Nextflow
 
 `ALIGN` runs after per-platform `QC` and before `COMPARE` when
-`params.enable_alignment = true`. `ALIGN_QC` then computes post-alignment QC
-metrics and overlays. When alignment is disabled, `COMPARE` and `VISUALIZE`
-continue to receive the enriched zarrs directly.
+`params.analysis_mode = paired` and `params.enable_alignment = true`.
+`ALIGN_QC` then computes post-alignment QC metrics and overlays. When
+alignment is disabled, `COMPARE` and `VISUALIZE` continue to receive the
+enriched zarrs directly. Alignment is not active in MERSCOPE-only or
+Xenium-only runs.
 
 Key parameters live in `workflows/nextflow.config`:
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `enable_alignment` | `false` | Run `ALIGN` and `ALIGN_QC`. |
+| `enable_alignment` | `false` | Run `ALIGN` and `ALIGN_QC`; requires paired analysis mode. |
 | `alignment_device` | `auto` | Spateo device; `auto` chooses CUDA when available. |
 | `alignment_dtype` | `float32` | Spateo tensor precision; keeps GPU memory lower. |
 | `alignment_selected_mode` | `nonrigid` | Coordinate set used for transformed outputs. |

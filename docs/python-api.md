@@ -49,9 +49,11 @@ Reference: [Configuration → Pydantic config models](configuration.md#pydantic-
 ## `merxen.io`
 
 ### `io.samplesheet` — [samplesheet.py](../src/merxen/io/samplesheet.py)
-- `SamplePair` dataclass — one pair of platforms.
+- `SamplePair` dataclass — one samplesheet row with optional MERSCOPE and
+  Xenium inputs.
 - `parse_samplesheet(csv_path) -> list[SamplePair]`.
-- `validate_samplesheet(pairs)`.
+- `validate_samplesheet(pairs, analysis_mode="paired")`.
+- `required_platforms_for_mode(analysis_mode)`.
 
 Used by unit tests and scripts; the Nextflow workflow parses the CSV itself
 with Groovy.
@@ -119,6 +121,8 @@ with Groovy.
 ### `qc.gene_comparison` — [gene_comparison.py](../src/merxen/qc/gene_comparison.py)
 - `compute_gene_comparison(xenium_sdata, merscope_sdata)`.
 - `compute_gene_comparison_from_paths(xenium_zarr_path, merscope_zarr_path)`.
+- `compute_gene_summary(sdata_obj, dataset_name)`.
+- `compute_gene_summary_from_path(zarr_path, dataset_name)`.
 - `gene_totals_from_points`, `gene_totals_from_table`,
   `apply_dataset_filter`, `normalize_counts`, `compare_df`, `fit_linear`.
 
@@ -128,10 +132,10 @@ One module per plot family:
 
 | Module | Public functions |
 |--------|------------------|
-| `gene_scatter` | `plot_gene_scatter` |
+| `gene_scatter` | `plot_gene_scatter`, `plot_gene_abundance` |
 | `qc_plots` | `plot_geometry_histograms`, `plot_geometry_histograms_comparison`, `plot_cell_metrics_violin`, `plot_cell_metrics_violin_comparison`, `plot_assignment_bar` |
-| `density_overview` | `density_hist2d`, `plot_density_overview`, `plot_transcript_overview` |
-| `sanity_plots` | `plot_sanity_overlay`, `plot_pair_sanity_crops` |
+| `density_overview` | `density_hist2d`, `plot_density_overview`, `plot_transcript_overview`, `plot_single_transcript_overview` |
+| `sanity_plots` | `plot_sanity_overlay`, `plot_pair_sanity_crops`, `plot_single_sanity_crop` |
 
 Most plotting functions take DataFrames / arrays. The paired transcript and
 sanity plots take already-opened SpatialData objects so they can work lazily

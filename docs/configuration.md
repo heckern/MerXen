@@ -50,6 +50,7 @@ any of them with `--<name>` on the command line.
 | Param | Default | Description |
 |-------|---------|-------------|
 | `outdir` | `./results` | Output root. |
+| `analysis_mode` | `paired` | `paired`, `merscope`, or `xenium`. Selects the platforms required from each samplesheet row and disables paired-only stages in single-platform runs. |
 | `force_spatialdata_build` | `false` | Rebuild SpatialData zarrs even if cached. |
 | `start_stage` | `build_spatialdata` | First stage to run. Skipped upstream stages are read from published outputs. |
 | `stop_stage` | `clustering_squidpy` | Last stage to run. MapMyCells is available after this but opt-in because it requires reference files. |
@@ -58,7 +59,8 @@ any of them with `--<name>` on the command line.
 Stage names accepted by `start_stage`, `stop_stage`, and `only_stage` are:
 `build_spatialdata`, `segment`, `enrich`, `qc`, `align`, `align_qc`,
 `compare`, `visualize`, `clustering_squidpy`, and `mapmycells`. `align` and
-`align_qc` are available only with `enable_alignment = true`.
+`align_qc` are available only with `enable_alignment = true`. `align`,
+`align_qc`, and `compare` are available only when `analysis_mode = paired`.
 
 ### Cellpose
 
@@ -105,7 +107,7 @@ pip install "anndata>=0.12.10"
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `enable_alignment` | `false` | Run `ALIGN` and `ALIGN_QC` between QC and comparison. |
+| `enable_alignment` | `false` | Run `ALIGN` and `ALIGN_QC` between QC and comparison. Requires `analysis_mode = paired`. |
 | `alignment_device` | `auto` | Spateo device; `auto` uses CUDA when available. |
 | `alignment_dtype` | `float32` | Spateo tensor precision; lower memory than float64. |
 | `alignment_selected_mode` | `nonrigid` | Coordinate set used by downstream alignment transforms. |

@@ -33,7 +33,10 @@ ${outdir}/
 └── ...
 ```
 
-`<pair_id>` comes straight from the `pair_id` column of the samplesheet.
+`<pair_id>` comes straight from the `pair_id` column of the samplesheet. In
+single-platform mode, only the selected `<platform>/` directory is present and
+paired-only `alignment/`, `alignment_qc/`, and `comparison/` directories are
+not written.
 Every `.png` plot listed below is also written as a same-stem `.pdf`.
 
 Nextflow also keeps its own working directory at `./work/` (next to the
@@ -98,7 +101,7 @@ Path: `${outdir}/<pair_id>/<platform>/qc/`
 
 Path: `${outdir}/<pair_id>/alignment/`
 
-Only present when `--enable_alignment true`.
+Only present when `--analysis_mode paired --enable_alignment true`.
 
 | File | Contents |
 |------|----------|
@@ -115,7 +118,7 @@ zarr as the fixed reference.
 
 Path: `${outdir}/<pair_id>/alignment_qc/`
 
-Only present when `--enable_alignment true`.
+Only present when `--analysis_mode paired --enable_alignment true`.
 
 | File | Contents |
 |------|----------|
@@ -126,6 +129,8 @@ Only present when `--enable_alignment true`.
 ### Comparison
 
 Path: `${outdir}/<pair_id>/comparison/`
+
+Only present in `--analysis_mode paired`.
 
 | File | Contents |
 |------|----------|
@@ -149,6 +154,21 @@ Path: `${outdir}/<pair_id>/visualization/`
 | `visualize_out/<pair_id>_sanity_overlay.png` | Paired 250 um image crops with all shape contours and transcript assignment status. |
 | `visualize_out/<pair_id>_sanity_overlay_crop_location.png` | Helper plot showing the MERSCOPE raw, MERSCOPE aligned, and Xenium crop locations used for the sanity overlay. |
 | `visualize_out/<pair_id>_assignment_rate_bar.png` | Bar chart comparing `pct_assigned` across platforms. |
+
+Single-platform runs write the available-platform equivalents with
+`<sample_id>` prefixes, where `<sample_id>` is `<pair_id>_MERSCOPE` or
+`<pair_id>_XENIUM`:
+
+| File | Contents |
+|------|----------|
+| `visualize_out/<sample_id>_gene_abundance_total_normalized.png` | Top gene abundance for all transcripts. |
+| `visualize_out/<sample_id>_gene_abundance_assigned_normalized.png` | Top gene abundance for assigned transcripts only. |
+| `visualize_out/<sample_id>_geometry_hist.png` | Single-platform geometry histograms. |
+| `visualize_out/<sample_id>_cell_violin.png` | Single-platform transcripts/cell and genes/cell violins. |
+| `visualize_out/<sample_id>_transcript_overview.png` | 3x1 single-platform transcript density, full scatter, and crop overview. |
+| `visualize_out/<sample_id>_sanity_overlay.png` | Single-platform 250 um sanity crop. |
+| `visualize_out/<sample_id>_sanity_overlay_crop_location.png` | Crop-location helper for the single-platform sanity crop. |
+| `visualize_out/<sample_id>_assignment_rate_bar.png` | Assignment-rate bar for the selected platform. |
 
 ### Squidpy clustering
 

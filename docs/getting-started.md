@@ -76,8 +76,10 @@ Copy the template and fill it in with your own dataset paths:
 cp workflows/samplesheet.example.csv workflows/samplesheet.csv
 ```
 
-Each row pairs one MERSCOPE folder with one Xenium folder. See the full schema
-in [Samplesheet format](samplesheet.md).
+By default, each row pairs one MERSCOPE folder with one Xenium folder. For
+single-platform runs, provide only the selected platform's source/cache columns
+and pass `--analysis_mode merscope` or `--analysis_mode xenium`. See the full
+schema in [Samplesheet format](samplesheet.md).
 
 ## 6. Run the pipeline
 

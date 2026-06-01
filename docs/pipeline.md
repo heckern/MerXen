@@ -11,7 +11,8 @@ channels.
 ┌───────────────────────┐
 │ samplesheet.csv (row) │
 └──────────┬────────────┘
-           │ flatMap → (MERSCOPE | XENIUM) inputs
+           │ flatMap → active platform inputs
+           │ (--analysis_mode paired|merscope|xenium)
            ▼
   ┌─────────────────┐
   │ BUILD_SPATIAL-  │   raw MERSCOPE / Xenium export
@@ -36,7 +37,7 @@ channels.
   │                 │   metrics, histograms, violins
   └────────┬────────┘
            ▼
-      (paired on pair_id)
+      (paired on pair_id when both platforms are active)
            │
            ▼
   ┌─────────────────┐
@@ -47,8 +48,8 @@ channels.
     ┌──────┴──────┐
     ▼             ▼
 ┌────────┐   ┌───────────┐
-│COMPARE │   │ VISUALIZE │  gene scatter, density,
-│        │   │           │  sanity overlays
+│COMPARE │   │ VISUALIZE │  paired or single-platform
+│paired  │   │           │  plots
 └────────┘   └───────────┘
                   │
                   ▼
@@ -64,18 +65,23 @@ channels.
            └───────────────────┘
 ```
 
-Both platforms traverse `BUILD_SPATIALDATA → SEGMENT → ENRICH → QC`
-independently. They are rejoined after QC. If `--enable_alignment true` is set,
-`ALIGN` and `ALIGN_QC` run before `COMPARE` / `VISUALIZE` /
-`CLUSTERING_SQUIDPY`; otherwise the paired stages consume the enriched zarrs
-directly. `MAPMYCELLS` consumes the AnnData files written by
+In `--analysis_mode paired`, both platforms traverse
+`BUILD_SPATIALDATA → SEGMENT → ENRICH → QC` independently and are rejoined
+after QC. If `--enable_alignment true` is set, `ALIGN` and `ALIGN_QC` run
+before `COMPARE` / `VISUALIZE` / `CLUSTERING_SQUIDPY`; otherwise the paired
+stages consume the enriched zarrs directly. In `--analysis_mode merscope` or
+`--analysis_mode xenium`, only the selected platform traverses those stages,
+and paired-only `ALIGN`, `ALIGN_QC`, and `COMPARE` are inactive. `MAPMYCELLS`
+consumes the AnnData files written by
 `CLUSTERING_SQUIDPY` and is opt-in because it requires local reference files.
 
 ## Channel keys and joins
 
 Per-platform stages key on `"${pair_id}|${platform}"` (e.g. `P0001|MERSCOPE`).
-The paired stages key on `pair_id` alone. The workflow filters the QC channel
-into MERSCOPE and XENIUM sub-channels and joins them by `pair_id`.
+Paired-only stages key on `pair_id` alone. In paired mode, the workflow filters
+the QC channel into MERSCOPE and XENIUM sub-channels and joins them by
+`pair_id`. For visualization, clustering, and MapMyCells, the workflow passes a
+JSON `samples` list so those stages can handle either one or two platforms.
 
 ## Data flow for one row
 
@@ -93,6 +99,9 @@ For a samplesheet row with `pair_id=EXAMPLE01`:
 | 8 | `VISUALIZE` × 1 | `merxen visualize` | updated MERSCOPE zarr if enabled; otherwise enriched zarrs | `visualize_out/` (PNG plots) |
 | 9 | `CLUSTERING_SQUIDPY` × 1 | `merxen clustering-squidpy` | same paired zarrs, after visualization in full runs | `clustering_squidpy_out/` (QC plots, UMAP/spatial plots, `.h5ad`) |
 | 10 | `MAPMYCELLS` × 1 | `merxen mapmycells` | clustered `.h5ad` files from `clustering_squidpy_out/` | `mapmycells_out/` (query `.h5ad`, CSV/JSON assignments, annotated `.h5ad`) |
+
+In single-platform mode, steps 1-4 run once per row, steps 5-7 are skipped,
+and steps 8-10 consume a one-sample config for the selected platform.
 
 All published artifacts land under
 `${params.outdir}/${pair_id}/<stage>/...`. See [Outputs](outputs.md).

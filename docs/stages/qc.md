@@ -1,8 +1,9 @@
 # Stage 4 — QC
 
 Computes per-cell geometry and transcript-assignment metrics on the enriched
-zarr of a single dataset. Runs independently for MERSCOPE and Xenium; results
-feed into the cross-platform comparison and the visualization stage.
+zarr of a single dataset. Runs independently for each active platform; results
+feed into cross-platform comparison in paired mode and visualization in all
+modes.
 
 ## What it does
 
