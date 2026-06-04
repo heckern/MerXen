@@ -15,6 +15,7 @@ from spatialdata_io import xenium as xenium_reader
 
 from merxen.config import SegmentationConfig
 from merxen.io.image_source import (
+    MERSCOPE_ZPROJ_IMAGE_NAME,
     build_image_source,
     fetch_merscope_projected_tile,
     fetch_tile,
@@ -108,6 +109,31 @@ def _load_dataset_sdata(
     if platform == "MERSCOPE":
         sdata = sd.read_zarr(dataset.data_path)
         matrix = _load_merscope_transform_matrix(config)
+
+        if MERSCOPE_ZPROJ_IMAGE_NAME in sdata.images:
+            source = build_image_source(
+                sdata.images[MERSCOPE_ZPROJ_IMAGE_NAME],
+                requested_channels=dataset.channels,
+                as_float32=True,
+            )
+            height, width, _ = source["shape"]
+            log_status(
+                f"[{dataset.name}] MERSCOPE projection image shape={height}x{width}, "
+                f"channels={source['channels']}"
+            )
+
+            def fetch_tile_fn(y0: int, y1: int, x0: int, x1: int) -> np.ndarray:
+                return fetch_tile(source, y0, y1, x0, x1)
+
+            points_key = list(sdata.points.keys())[0]
+            return (
+                sdata,
+                fetch_tile_fn,
+                height,
+                width,
+                matrix,
+                sdata.points[points_key],
+            )
 
         plane_keys = list_plane_keys(sdata.images, prefix=dataset.image_prefix)
         if dataset.z_range is None:

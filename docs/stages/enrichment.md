@@ -75,10 +75,10 @@ forward.
 3. **Cellpose shape layer.** Load `cellpose_masks_tiled.npy`, convert to
    polygons, and store as `MOSAIK_cellpose`.
 4. **Copy vendor layers.** For MERSCOPE: the original cell boundaries are
-   cloned to `merscope_old_shapes`, the source z-plane images are copied into
-   the enriched zarr, and a lazy max-projection image is added under
-   `MERSCOPE_z_projection`. For Xenium: cell and nucleus boundaries and
-   morphology images are copied.
+   cloned to `merscope_old_shapes`, and only the max-projection image is stored
+   under `MERSCOPE_z_projection`. Legacy source zarrs with one image per z
+   plane are projected during enrichment rather than copied plane-by-plane. For
+   Xenium: cell and nucleus boundaries and morphology focus images are copied.
 5. **Per-shape tables.** `run_per_shape_assignment_for_dataset` iterates over
    each shape layer and builds a gene × cell counts table by streaming
    transcript points in chunks of `chunk_rows=750_000`. When a vendor table

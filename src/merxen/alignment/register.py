@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
 import numpy as np
@@ -460,7 +460,7 @@ def _coerce_alignment_config(config: Any) -> AlignmentConfig:
     if isinstance(config, AlignmentConfig):
         return config
     if isinstance(config, dict):
-        return AlignmentConfig.model_validate(config)
+        return cast(AlignmentConfig, AlignmentConfig.model_validate(config))
     raise TypeError(
         "register_pair expects an AlignmentConfig or dict. "
         f"Got {type(config).__name__}."

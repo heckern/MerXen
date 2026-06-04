@@ -78,6 +78,25 @@ to `main` and every PR:
 
 Branch protection on `main` should require this workflow to pass.
 
+## Version bumps
+
+MerXen uses semantic versions in [pyproject.toml](../pyproject.toml) and
+[src/merxen/__init__.py](../src/merxen/__init__.py). Keep both files in sync
+with `bump-my-version`:
+
+```bash
+uv run bump-my-version bump patch  # bug fixes and small changes
+uv run bump-my-version bump minor  # backwards-compatible features
+uv run bump-my-version bump major  # breaking changes
+```
+
+For a release commit and tag from a clean working tree:
+
+```bash
+uv run bump-my-version bump patch --commit --tag
+git push origin HEAD --tags
+```
+
 ## Dependency management
 
 - **Add a dependency:** edit [pyproject.toml](../pyproject.toml), then

@@ -336,7 +336,7 @@ class ClusteringSquidpyAnnotationConfig(BaseModel):
     """Atlas marker options for hierarchical broad-cluster annotation."""
 
     marker_lookup_path: Path | None = Path(
-        "/media/mathieubo/SSD2/MerXen/mapmycells/" "query_markers.n10.20240221800.json"
+        "/media/mathieubo/SSD2/MerXen/mapmycells/query_markers.n10.20240221800.json"
     )
     taxonomy_metadata_path: Path | None = Path(
         "/media/mathieubo/SSD2/MerXen/mapmycells/abc_whb/metadata/"

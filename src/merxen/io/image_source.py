@@ -8,10 +8,13 @@ from contextlib import suppress
 from typing import Any
 
 import numpy as np
+import xarray as xr
 
 from merxen._typing import ImageSource
 
 logger = logging.getLogger(__name__)
+
+MERSCOPE_ZPROJ_IMAGE_NAME = "MERSCOPE_z_projection"
 
 
 def list_plane_keys(
@@ -54,7 +57,61 @@ def _get_image_dataarray(img_obj: Any) -> Any:
     with suppress(Exception):
         return img_obj["scale0"].ds["image"]
 
+    with suppress(Exception):
+        return img_obj["s0"].ds["image"]
+
     return img_obj
+
+
+def image_to_cyx(image_like: Any) -> Any:
+    """Convert image-like input to ``(c, y, x)`` ordering."""
+    da = _get_image_dataarray(image_like)
+    dims = tuple(str(d) for d in da.dims)
+    if all(d in dims for d in ("c", "y", "x")):
+        return da.transpose("c", "y", "x")
+    if all(d in dims for d in ("y", "x", "c")):
+        return da.transpose("c", "y", "x")
+    if all(d in dims for d in ("y", "x")):
+        return da.expand_dims(c=["c0"]).transpose("c", "y", "x")
+    raise ValueError(f"Unsupported image dims for conversion to (c,y,x): {dims}")
+
+
+def max_project_image_elements(image_elements: list[Any]) -> Any:
+    """Build a lazy max projection from image elements.
+
+    Args:
+        image_elements: One or more image-like objects.
+
+    Returns:
+        A ``(c, y, x)`` DataArray containing the per-pixel maximum across
+        image elements. A single image is only normalized to ``(c, y, x)``.
+    """
+    if len(image_elements) == 0:
+        raise ValueError("image_elements is empty")
+    if len(image_elements) == 1:
+        return image_to_cyx(image_elements[0])
+    plane_arrays = [image_to_cyx(element) for element in image_elements]
+    return xr.concat(plane_arrays, dim="z").max(dim="z", keep_attrs=True)
+
+
+def build_merscope_z_projection(
+    images: dict[str, Any],
+    *,
+    image_prefix: str | None = None,
+) -> Any:
+    """Return a MERSCOPE projection from projection-only or legacy z-plane images."""
+    if MERSCOPE_ZPROJ_IMAGE_NAME in images:
+        return image_to_cyx(images[MERSCOPE_ZPROJ_IMAGE_NAME])
+
+    plane_pairs = list_plane_keys(images, prefix=image_prefix)
+    plane_keys = [key for _, key in plane_pairs]
+    if len(plane_keys) == 0:
+        plane_keys = list(images.keys())
+    if len(plane_keys) == 0:
+        raise ValueError("No MERSCOPE images available for projection")
+    log_suffix = f" from {len(plane_keys)} z planes" if len(plane_keys) > 1 else ""
+    logger.info("Building MERSCOPE z projection%s", log_suffix)
+    return max_project_image_elements([images[key] for key in plane_keys])
 
 
 def build_image_source(
@@ -148,9 +205,10 @@ def fetch_tile(
         Numpy array of shape (y1-y0, x1-x0, channels).
     """
     if source["kind"] == "xarray":
-        arr = np.asarray(
-            source["data"].isel(y=slice(y0, y1), x=slice(x0, x1)).data.compute()
-        )
+        data = source["data"].isel(y=slice(y0, y1), x=slice(x0, x1)).data
+        if hasattr(data, "compute"):
+            data = data.compute()
+        arr = np.asarray(data)
     else:
         arr = np.asarray(source["data"][y0:y1, x0:x1, :])
     if source.get("as_float32", False):

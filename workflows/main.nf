@@ -134,6 +134,7 @@ def requirePlatformInput(row, pairId, platform) {
 def buildConfigForPlatform(row, pairId, platform) {
     def input = requirePlatformInput(row, pairId, platform)
     if (platform == "MERSCOPE") {
+        def zRange = parseRange(row.merscope_z_range, 0, 6)
         return [
             dataset_name: "${pairId}_MERSCOPE",
             platform: "MERSCOPE",
@@ -141,7 +142,9 @@ def buildConfigForPlatform(row, pairId, platform) {
             output_path: "spatialdata_out/source_spatialdata.zarr",
             persistent_output_path: input.spatialdataPath ?: null,
             merscope_transform_path: chooseField(row, ["merscope_transform_path"]) ?: null,
-            merscope: [:],
+            merscope: [
+                z_layers: (zRange[0]..zRange[1]).collect { it as int },
+            ],
             xenium: [:],
         ]
     }

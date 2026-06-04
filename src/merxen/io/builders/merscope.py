@@ -24,6 +24,10 @@ from spatialdata.models import Image2DModel, PointsModel, ShapesModel, TableMode
 from spatialdata.transformations import Affine, BaseTransformation
 
 from merxen.config import MerscopeBuildConfig
+from merxen.io.image_source import (
+    MERSCOPE_ZPROJ_IMAGE_NAME,
+    build_merscope_z_projection,
+)
 from merxen.io.spatialdata_io import write_spatialdata_zarr
 
 if TYPE_CHECKING:
@@ -123,6 +127,7 @@ def write_merscope_spatialdata(
             slide_name=build_config.slide_name,
         )
 
+    _replace_merscope_images_with_projection(sdata)
     write_spatialdata_zarr(sdata, output_path, overwrite=True)
     _copy_merscope_sidecars(
         input_path=input_path,
@@ -130,6 +135,16 @@ def write_merscope_spatialdata(
         transform_path_override=transform_path_override,
     )
     return output_path
+
+
+def _replace_merscope_images_with_projection(sdata: SpatialData) -> None:
+    """Keep only the max-projected MERSCOPE image layer before writing."""
+    if len(sdata.images) == 0:
+        return
+    projection = build_merscope_z_projection(sdata.images)
+    for key in list(sdata.images.keys()):
+        del sdata.images[key]
+    sdata.images[MERSCOPE_ZPROJ_IMAGE_NAME] = projection
 
 
 def discover_merscope_z_layers(path: Path) -> list[int]:

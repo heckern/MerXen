@@ -68,6 +68,8 @@ A paired row with `pair_id=EXAMPLE01` fans out to **two**
    `SpatialData` object (images, shapes, points, metadata tables), and writes
    it to the target path using
    [`write_spatialdata_zarr`](../../src/merxen/io/spatialdata_io.py#L17).
+   MERSCOPE images are stored as a single `MERSCOPE_z_projection` max
+   projection over the selected z range, not as one image element per z plane.
 5. The resulting path is returned and flows into the next Nextflow channel.
 
 ## Caching behaviour

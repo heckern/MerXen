@@ -118,6 +118,11 @@ ruff format .
 # Type check
 mypy src/
 
+# Bump package version
+uv run bump-my-version bump patch  # small fixes, e.g. 0.1.0 -> 0.1.1
+uv run bump-my-version bump minor  # new features, e.g. 0.1.0 -> 0.2.0
+uv run bump-my-version bump major  # breaking changes, e.g. 0.1.0 -> 1.0.0
+
 # Regenerate lockfile after changing dependencies
 uv pip compile pyproject.toml --extra dev -o requirements.lock
 ```

@@ -12,7 +12,6 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import spatialdata as sd
-import xarray as xr
 from scipy import sparse as sps
 from scipy.io import mmread
 from shapely.affinity import affine_transform
@@ -22,7 +21,11 @@ from spatialdata_io import xenium as xenium_reader
 from tqdm.auto import tqdm
 
 from merxen.config import EnrichmentConfig
-from merxen.io.image_source import _get_image_dataarray, list_plane_keys
+from merxen.io.image_source import (
+    MERSCOPE_ZPROJ_IMAGE_NAME,
+    build_merscope_z_projection,
+    image_to_cyx,
+)
 from merxen.io.spatialdata_io import write_spatialdata_zarr
 from merxen.memory import force_release, log_status
 from merxen.path_utils import remove_path, stage_existing_output
@@ -37,7 +40,6 @@ MERSCOPE_OLD_SHAPE_NAME = "merscope_cell_boundaries"
 XENIUM_OLD_CELL_SHAPE_NAME = "xenium_cell_boundaries"
 XENIUM_OLD_NUCLEUS_SHAPE_NAME = "xenium_nucleus"
 ORIGINAL_TABLE_NAME = "table_original"
-MERSCOPE_ZPROJ_IMAGE_NAME = "MERSCOPE_z_projection"
 
 
 def _delete_if_exists(mapping: Any, key: str) -> None:
@@ -66,15 +68,7 @@ def _remove_path(path: Path) -> None:
 
 def _to_cyx(image_like: Any) -> Any:
     """Convert image-like input to (c, y, x) ordering."""
-    da = _get_image_dataarray(image_like)
-    dims = tuple(str(d) for d in da.dims)
-    if all(d in dims for d in ("c", "y", "x")):
-        return da.transpose("c", "y", "x")
-    if all(d in dims for d in ("y", "x", "c")):
-        return da.transpose("c", "y", "x")
-    if all(d in dims for d in ("y", "x")):
-        return da.expand_dims(c=["c0"]).transpose("c", "y", "x")
-    raise ValueError(f"Unsupported image dims for conversion to (c,y,x): {dims}")
+    return image_to_cyx(image_like)
 
 
 def _parse_shapes_with_template(
@@ -468,44 +462,21 @@ def _copy_merscope_images(
     force: bool,
     image_prefix: str | None = None,
 ) -> int:
-    """Copy MERSCOPE image planes and add a lazy z-projection."""
-    plane_pairs = list_plane_keys(src_sdata.images, prefix=image_prefix)
-    plane_keys = [k for _, k in plane_pairs]
-    if len(plane_keys) == 0:
-        plane_keys = list(src_sdata.images.keys())
-
-    copied = 0
-    for key in plane_keys:
-        copied += int(
-            _set_element(
-                dst_sdata.images,
-                key,
-                src_sdata.images[key],
-                force=force,
-            )
+    """Copy only the MERSCOPE max-projection image into the destination."""
+    if len(src_sdata.images) == 0:
+        return 0
+    projection = build_merscope_z_projection(
+        src_sdata.images,
+        image_prefix=image_prefix,
+    )
+    return int(
+        _set_element(
+            dst_sdata.images,
+            MERSCOPE_ZPROJ_IMAGE_NAME,
+            projection,
+            force=force,
         )
-
-    if len(plane_keys) > 0:
-        if len(plane_keys) == 1:
-            projection = _to_cyx(src_sdata.images[plane_keys[0]])
-        else:
-            log_status(
-                f"[MERSCOPE] Building lazy z-projection from {len(plane_keys)} planes"
-            )
-            plane_arrays = [_to_cyx(src_sdata.images[k]) for k in plane_keys]
-            projection = xr.concat(plane_arrays, dim="z").max(
-                dim="z",
-                keep_attrs=True,
-            )
-        copied += int(
-            _set_element(
-                dst_sdata.images,
-                MERSCOPE_ZPROJ_IMAGE_NAME,
-                projection,
-                force=force,
-            )
-        )
-    return copied
+    )
 
 
 def _copy_xenium_images(dst_sdata: Any, src_sdata: Any, *, force: bool) -> int:
