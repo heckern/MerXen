@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sys
 import textwrap
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +19,7 @@ import matplotlib
 if "ipykernel" not in sys.modules:
     matplotlib.use("Agg", force=True)
 
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -23,7 +27,9 @@ import scanpy as sc
 import seaborn as sns
 import spatialdata as sd
 import squidpy as sq
+from matplotlib.lines import Line2D
 from scipy import sparse
+from scipy.cluster.hierarchy import leaves_list, linkage
 
 from merxen.config import ClusteringSquidpyConfig
 from merxen.io.transcript_io import first_existing_col
@@ -47,6 +53,7 @@ GENE_SYMBOL_COLUMN_CANDIDATES = (
     "feature",
     "name",
 )
+NEUROTRANSMITTER_LEVEL = "CCN202210140_NEUR"
 CONTROL_TOKENS = (
     "blank",
     "control",
@@ -75,6 +82,120 @@ QC_COLUMNS = [
     "control_feature_counts",
     "control_obsm_counts",
 ]
+HIERARCHICAL_UNS_KEY = "merxen_hierarchical_clustering"
+BROAD_CLUSTER_KEY = "leiden_broad"
+BROAD_ATLAS_LABEL_KEY = "broad_atlas_label"
+BROAD_CLASS_KEY = "broad_class"
+NEURON_SPLIT_KEY = "neuron_split_label"
+SUBCLUSTER_LABEL_KEY = "subcluster_label"
+HIERARCHICAL_CLUSTER_KEY = "hierarchical_cluster"
+UNKNOWN_LABEL = "Mixed/Unknown"
+NEURON_CLASS = "Neurons"
+NON_NEURON_SUPERCLUSTER_CLASS_MAP = {
+    "Oligodendrocyte": "Oligodendrocytes",
+    "Committed oligodendrocyte precursor": "Oligodendrocyte precursors",
+    "Oligodendrocyte precursor": "Oligodendrocyte precursors",
+    "Astrocyte": "Astrocytes",
+    "Microglia": "Microglia",
+    "Fibroblast": "Fibroblasts",
+    "Vascular": "Vascular cells",
+}
+EXTRA_SUPERCLUSTER_LABELS = {
+    "Bergmann glia",
+    "Choroid plexus",
+    "Ependymal",
+    "Miscellaneous",
+    "Splatter",
+}
+NEURON_SUPERCLUSTER_LABELS = {
+    "Upper-layer intratelencephalic",
+    "Deep-layer intratelencephalic",
+    "Deep-layer near-projecting",
+    "Deep-layer corticothalamic and 6b",
+    "MGE interneuron",
+    "CGE interneuron",
+    "LAMP5-LHX6 and Chandelier",
+    "Hippocampal CA1-3",
+    "Hippocampal CA4",
+    "Hippocampal dentate gyrus",
+    "Amygdala excitatory",
+    "Medium spiny neuron",
+    "Eccentric medium spiny neuron",
+    "Mammillary body",
+    "Thalamic excitatory",
+    "Midbrain-derived inhibitory",
+    "Upper rhombic lip",
+    "Cerebellar inhibitory",
+    "Lower rhombic lip",
+}
+INHIBITORY_SUPERCLUSTER_TOKENS = (
+    "inhibitory",
+    "interneuron",
+    "chandelier",
+    "medium spiny",
+)
+EXCITATORY_SUPERCLUSTER_TOKENS = (
+    "excitatory",
+    "intratelencephalic",
+    "corticothalamic",
+    "near-projecting",
+    "hippocampal",
+    "mammillary",
+    "rhombic lip",
+)
+ASSIGNMENT_COLUMNS = [
+    "cluster",
+    "atlas_label",
+    "broad_class",
+    "score",
+    "runner_up_label",
+    "runner_up_score",
+    "score_margin",
+    "n_markers",
+]
+SCORE_COLUMNS = [
+    "cluster",
+    "label_id",
+    "atlas_label",
+    "broad_class",
+    "score",
+    "n_markers",
+    "resolved_markers",
+]
+MARKER_COLUMNS = [
+    "label_id",
+    "label_name",
+    "broad_class",
+    "neuron_split",
+    "n_reference_markers",
+    "n_resolved_markers",
+    "resolved_markers",
+]
+
+
+@dataclass(frozen=True)
+class AtlasMarkerSet:
+    """Resolved metadata for one atlas marker set."""
+
+    level: str
+    label_id: str
+    label_name: str
+    broad_class: str
+    marker_ids: tuple[str, ...]
+    neuron_split: str = ""
+
+
+@dataclass(frozen=True)
+class RoundParams:
+    """Effective clustering parameters for one hierarchical round."""
+
+    min_counts: int
+    min_cells: int
+    n_pcs: int
+    n_neighbors: int
+    leiden_resolution: float
+    umap_min_dist: float
+    umap_spread: float
 
 
 def load_spatialdata_adata(
@@ -265,6 +386,8 @@ def run_scanpy_clustering(
     umap_spread: float = 1.0,
     random_seed: int = 0,
     use_gpu: bool = True,
+    key_added: str = "leiden",
+    input_layer: str | None = None,
 ) -> ad.AnnData:
     """Run the Scanpy preprocessing and clustering workflow.
 
@@ -287,11 +410,22 @@ def run_scanpy_clustering(
         random_seed: Random seed for reproducibility.
         use_gpu: Use rapids-singlecell GPU-accelerated PCA, neighbors, UMAP,
             and Leiden. Falls back to CPU if rapids-singlecell is not installed.
+        key_added: ``obs`` column for Leiden labels.
+        input_layer: Optional layer copied into ``X`` before filtering and
+            normalization, used when reclustering subsets from raw counts.
 
     Returns:
-        Clustered AnnData with ``leiden`` labels in ``.obs``.
+        Clustered AnnData with Leiden labels in ``.obs[key_added]``.
     """
     clustered = adata.copy()
+    if input_layer is not None:
+        if input_layer not in clustered.layers:
+            raise KeyError(
+                f"Requested input_layer={input_layer!r} not found. "
+                f"Available layers: {list(clustered.layers.keys())}"
+            )
+        clustered.X = _copy_matrix(clustered.layers[input_layer])
+
     if drop_control_features:
         clustered = remove_control_features(clustered)
     else:
@@ -356,6 +490,7 @@ def run_scanpy_clustering(
             umap_spread=float(umap_spread),
             leiden_resolution=float(leiden_resolution),
             random_seed=int(random_seed),
+            key_added=key_added,
         )
 
     if not gpu_used:
@@ -377,16 +512,18 @@ def run_scanpy_clustering(
             clustered,
             resolution=float(leiden_resolution),
             random_state=int(random_seed),
-            key_added="leiden",
+            key_added=key_added,
             flavor="igraph",
             n_iterations=2,
             directed=False,
         )
 
-    clustered.uns["merxen_clustering_params"] = {
+    params = {
         "drop_control_features": bool(drop_control_features),
         "min_counts": int(min_counts),
         "min_cells": int(min_cells),
+        "input_layer": input_layer,
+        "key_added": key_added,
         "normalize_target_sum": normalize_target_sum,
         "normalize_exclude_highly_expressed": bool(normalize_exclude_highly_expressed),
         "normalize_max_fraction": float(normalize_max_fraction),
@@ -399,6 +536,10 @@ def run_scanpy_clustering(
         "random_seed": int(random_seed),
         "gpu_used": gpu_used,
     }
+    params_key = f"merxen_clustering_params_{key_added}"
+    clustered.uns[params_key] = params
+    if key_added == "leiden":
+        clustered.uns["merxen_clustering_params"] = params
     return clustered
 
 
@@ -452,6 +593,7 @@ def _run_gpu_clustering(
     umap_spread: float,
     leiden_resolution: float,
     random_seed: int,
+    key_added: str = "leiden",
 ) -> bool:
     """Run PCA, neighbors, UMAP, and Leiden on GPU via rapids-singlecell.
 
@@ -463,7 +605,8 @@ def _run_gpu_clustering(
     except ImportError:
         logger.warning(
             "rapids_singlecell not installed; falling back to CPU clustering. "
-            "Install with: pip install -e '.[gpu]' --extra-index-url=https://pypi.nvidia.com"
+            "Install with: pip install -e '.[gpu]' "
+            "--extra-index-url=https://pypi.nvidia.com"
         )
         return False
 
@@ -495,7 +638,7 @@ def _run_gpu_clustering(
             adata,
             resolution=leiden_resolution,
             random_state=random_seed,
-            key_added="leiden",
+            key_added=key_added,
         )
     finally:
         rsc.get.anndata_to_CPU(adata)
@@ -603,6 +746,7 @@ def plot_spatial_scatter(
     color: str = "leiden",
     point_size: float = 2.0,
     alpha: float = 0.6,
+    scale_bar_um: float | None = 200.0,
     dpi: int = 160,
 ) -> Path:
     """Save a Squidpy spatial scatter plot for the clustered AnnData object."""
@@ -640,9 +784,91 @@ def plot_spatial_scatter(
                 category=UserWarning,
             )
             sq.pl.spatial_scatter(adata, **scatter_kwargs)
+    _clean_spatial_axis(ax)
+    if scale_bar_um is not None:
+        _add_spatial_scale_bar(ax, length_um=float(scale_bar_um))
     save_figure(fig, output_path, dpi=int(dpi), bbox_inches="tight")
     plt.close(fig)
     return output_path
+
+
+def _clean_spatial_axis(ax: plt.Axes) -> None:
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_aspect("equal", adjustable="box")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+
+def _add_spatial_scale_bar(
+    ax: plt.Axes,
+    *,
+    length_um: float = 200.0,
+    label: str | None = None,
+    color: str = "white",
+    outline_color: str = "black",
+    linewidth: float = 3.0,
+    fontsize: float = 9.0,
+) -> None:
+    x_limits = ax.get_xlim()
+    y_limits = ax.get_ylim()
+    x_min, x_max = min(x_limits), max(x_limits)
+    y_min, y_max = min(y_limits), max(y_limits)
+    x_span = x_max - x_min
+    y_span = y_max - y_min
+    if x_span <= 0 or y_span <= 0 or length_um <= 0:
+        return
+
+    pad_x = x_span * 0.06
+    pad_y = y_span * 0.06
+    text_offset = y_span * 0.025
+    x_end = x_max - pad_x
+    x_start = x_end - float(length_um)
+    if x_start < x_min + pad_x:
+        x_start = x_min + pad_x
+        x_end = min(x_max - pad_x, x_start + float(length_um))
+
+    y_inverted = y_limits[0] > y_limits[1]
+    if y_inverted:
+        y_bar = y_max - pad_y
+        y_text = y_bar - text_offset
+        va = "bottom"
+    else:
+        y_bar = y_min + pad_y
+        y_text = y_bar + text_offset
+        va = "bottom"
+
+    outline = [
+        path_effects.Stroke(linewidth=linewidth + 2.2, foreground=outline_color),
+        path_effects.Normal(),
+    ]
+    ax.plot(
+        [x_start, x_end],
+        [y_bar, y_bar],
+        color=color,
+        linewidth=linewidth,
+        solid_capstyle="butt",
+        path_effects=outline,
+        zorder=20,
+    )
+    ax.text(
+        (x_start + x_end) / 2.0,
+        y_text,
+        label or f"{length_um:g} um",
+        ha="center",
+        va=va,
+        color=color,
+        fontsize=fontsize,
+        path_effects=[
+            path_effects.Stroke(linewidth=2.2, foreground=outline_color),
+            path_effects.Normal(),
+        ],
+        zorder=21,
+    )
+    ax.set_xlim(x_limits)
+    ax.set_ylim(y_limits)
 
 
 def plot_spatial_cluster_grid(
@@ -737,6 +963,258 @@ def plot_spatial_cluster_grid(
     return output_path
 
 
+def compute_group_gene_summary(
+    adata: ad.AnnData,
+    genes: list[str],
+    *,
+    groupby: str,
+    group_order: list[str] | None = None,
+    layer: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return mean expression and fraction expressing for genes grouped by obs."""
+    if groupby not in adata.obs:
+        raise KeyError(f"Expected adata.obs[{groupby!r}] for gene summary.")
+    if layer is not None and layer not in adata.layers:
+        raise KeyError(f"Expected adata.layers[{layer!r}] for gene summary.")
+
+    if group_order is None:
+        groups = adata.obs[groupby]
+        observed = set(groups.astype(str))
+        if isinstance(groups.dtype, pd.CategoricalDtype):
+            group_order = [
+                str(category)
+                for category in groups.cat.categories
+                if str(category) in observed
+            ]
+        else:
+            group_order = [str(group) for group in pd.unique(groups.astype(str))]
+    group_order = [str(group) for group in group_order]
+
+    marker_lookup = _feature_marker_lookup(adata)
+    gene_indices: list[int] = []
+    resolved_genes: list[str] = []
+    seen_indices: set[int] = set()
+    for gene in dict.fromkeys(str(gene) for gene in genes):
+        idx = marker_lookup.get(_normalize_marker_id(gene))
+        if idx is None or idx in seen_indices:
+            continue
+        gene_indices.append(idx)
+        resolved_genes.append(str(adata.var_names[idx]))
+        seen_indices.add(idx)
+    if not gene_indices:
+        raise ValueError("No requested genes were present in the AnnData object.")
+
+    matrix = adata.layers[layer] if layer is not None else adata.X
+    expression = matrix[:, gene_indices]
+    if sparse.issparse(expression):
+        expression = expression.tocsr()
+    else:
+        expression = np.asarray(expression)
+
+    labels = adata.obs[groupby].astype(str).to_numpy()
+    means: list[np.ndarray] = []
+    fractions: list[np.ndarray] = []
+    for group in group_order:
+        mask = labels == str(group)
+        if not np.any(mask):
+            means.append(np.zeros(len(resolved_genes), dtype=float))
+            fractions.append(np.zeros(len(resolved_genes), dtype=float))
+            continue
+        group_expression = expression[mask]
+        if sparse.issparse(group_expression):
+            means.append(np.asarray(group_expression.mean(axis=0)).ravel())
+            fractions.append(np.asarray((group_expression > 0).mean(axis=0)).ravel())
+        else:
+            means.append(np.asarray(group_expression.mean(axis=0)).ravel())
+            fractions.append(np.asarray((group_expression > 0).mean(axis=0)).ravel())
+
+    mean_expression = pd.DataFrame(
+        means,
+        index=pd.Index(group_order, name=groupby),
+        columns=pd.Index(resolved_genes, name="gene"),
+    )
+    fraction_expression = pd.DataFrame(
+        fractions,
+        index=pd.Index(group_order, name=groupby),
+        columns=pd.Index(resolved_genes, name="gene"),
+    )
+    return mean_expression, fraction_expression
+
+
+def plot_group_gene_dotplot(
+    mean_expression: pd.DataFrame,
+    fraction_expression: pd.DataFrame,
+    output_path: Path | str,
+    *,
+    gene_order: list[str] | None = None,
+    cluster_genes: bool = True,
+    standardize_mean_by_gene: bool = True,
+    z_score_clip: tuple[float, float] = (-2.0, 2.0),
+    min_dot_size: float = 2.0,
+    max_dot_size: float = 55.0,
+    cmap: str = "RdBu_r",
+    figsize: tuple[float, float] | None = None,
+    x_axis_label: str = "Subcluster",
+    y_axis_label: str = "Panel genes",
+    title: str = "Panel gene expression by subcluster",
+    x_label_fontsize: float = 10.0,
+    y_label_fontsize: float = 4.5,
+    title_fontsize: float = 12.0,
+    dpi: int = 220,
+) -> Path:
+    """Save a dotplot of mean expression and fraction expressing by group."""
+    output_path = prepare_plot_output(output_path)
+    if mean_expression.empty or fraction_expression.empty:
+        fig, ax = plt.subplots(figsize=(7.0, 4.0))
+        ax.text(
+            0.5,
+            0.5,
+            "No gene expression summary was available.",
+            ha="center",
+            va="center",
+        )
+        ax.axis("off")
+        save_figure(fig, output_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
+        return output_path
+
+    if gene_order is None:
+        gene_order = (
+            _cluster_gene_order(mean_expression)
+            if cluster_genes
+            else list(mean_expression.columns)
+        )
+
+    group_order = list(mean_expression.index.astype(str))
+    mean_plot = mean_expression.loc[group_order, gene_order]
+    fraction_plot = fraction_expression.loc[group_order, gene_order]
+
+    color_values = mean_plot.copy()
+    if standardize_mean_by_gene:
+        gene_std = color_values.std(axis=0).replace(0, np.nan)
+        color_values = (
+            color_values.sub(color_values.mean(axis=0), axis=1)
+            .div(gene_std, axis=1)
+            .fillna(0)
+            .clip(lower=z_score_clip[0], upper=z_score_clip[1])
+        )
+        vmin, vmax = z_score_clip
+        colorbar_label = "Mean expression z-score"
+    else:
+        vmin = 0.0
+        vmax = float(np.nanpercentile(color_values.to_numpy(), 99.5))
+        if vmax <= 0:
+            vmax = 1.0
+        colorbar_label = "Mean expression"
+
+    if figsize is None:
+        figsize = (
+            max(8.0, len(group_order) * 0.95 + 2.5),
+            max(10.0, len(gene_order) * 0.09 + 2.0),
+        )
+
+    fig, ax = plt.subplots(figsize=figsize)
+    x_positions, y_positions = np.meshgrid(
+        np.arange(len(group_order)),
+        np.arange(len(gene_order)),
+    )
+    dot_sizes = min_dot_size + fraction_plot.T.to_numpy().ravel() * (
+        max_dot_size - min_dot_size
+    )
+    scatter = ax.scatter(
+        x_positions.ravel(),
+        y_positions.ravel(),
+        c=color_values.T.to_numpy().ravel(),
+        s=dot_sizes,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        edgecolors="lightgray",
+        linewidths=0.15,
+    )
+
+    ax.set_xticks(np.arange(len(group_order)))
+    ax.set_xticklabels(
+        group_order,
+        rotation=35,
+        ha="right",
+        fontsize=x_label_fontsize,
+    )
+    ax.set_yticks(np.arange(len(gene_order)))
+    ax.set_yticklabels(gene_order, fontsize=y_label_fontsize)
+    ax.set_xlim(-0.5, len(group_order) - 0.5)
+    ax.set_ylim(len(gene_order) - 0.5, -0.5)
+    ax.set_xlabel(x_axis_label)
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title, fontsize=title_fontsize)
+    ax.grid(axis="x", color="lightgray", linewidth=0.35, alpha=0.5)
+    ax.grid(axis="y", color="lightgray", linewidth=0.25, alpha=0.35)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    colorbar = fig.colorbar(scatter, ax=ax, fraction=0.018, pad=0.008)
+    colorbar.set_label(colorbar_label)
+
+    legend_fractions = [0.25, 0.5, 0.75, 1.0]
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            color="none",
+            markerfacecolor="white",
+            markeredgecolor="gray",
+            markersize=np.sqrt(min_dot_size + fraction * (max_dot_size - min_dot_size)),
+            label=f"{fraction:.0%}",
+        )
+        for fraction in legend_fractions
+    ]
+    ax.legend(
+        handles=legend_handles,
+        title="Fraction expressing",
+        frameon=False,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        borderaxespad=0.0,
+    )
+
+    fig.tight_layout()
+    save_figure(fig, output_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _cluster_gene_order(
+    mean_expression: pd.DataFrame,
+    *,
+    method: str = "average",
+    metric: str = "euclidean",
+) -> list[str]:
+    if mean_expression.shape[1] <= 2:
+        return list(mean_expression.columns)
+
+    profiles = mean_expression.T.to_numpy(dtype=float)
+    profiles = np.nan_to_num(profiles, copy=False)
+    profile_means = profiles.mean(axis=1, keepdims=True)
+    profile_stds = profiles.std(axis=1, keepdims=True)
+    profiles = (profiles - profile_means) / np.where(
+        profile_stds == 0,
+        1.0,
+        profile_stds,
+    )
+    if np.allclose(profiles, 0):
+        return list(mean_expression.columns)
+
+    gene_linkage = linkage(
+        profiles,
+        method=method,
+        metric=metric,
+        optimal_ordering=True,
+    )
+    return [str(mean_expression.columns[index]) for index in leaves_list(gene_linkage)]
+
+
 def save_qc_metrics(adata: ad.AnnData, output_path: Path | str) -> Path:
     """Write selected per-cell QC metrics to CSV."""
     output_path = Path(output_path)
@@ -756,6 +1234,940 @@ def save_clustered_adata(adata: ad.AnnData, output_path: Path | str) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     adata.write_h5ad(output_path)
     return output_path
+
+
+def run_hierarchical_scanpy_clustering(
+    adata: ad.AnnData,
+    config: ClusteringSquidpyConfig,
+    *,
+    output_dir: Path | str,
+    sample_id: str,
+) -> tuple[ad.AnnData, dict[str, Path]]:
+    """Run broad annotation and branch-level subclustering."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifacts: dict[str, Path] = {}
+
+    broad_params = _effective_round_params(config, config.broad_round)
+    clustered = _run_configured_round(
+        adata,
+        config,
+        broad_params,
+        key_added=BROAD_CLUSTER_KEY,
+        input_layer=None,
+        drop_control_features=config.drop_control_features,
+    )
+    clustered.obs["leiden"] = clustered.obs[BROAD_CLUSTER_KEY].astype(str)
+
+    marker_sets = _load_configured_marker_sets(config)
+    marker_alias_lookup = _load_configured_marker_alias_lookup(config)
+    broad_assignments, broad_scores, broad_markers = score_clusters_by_atlas_markers(
+        clustered,
+        cluster_key=BROAD_CLUSTER_KEY,
+        marker_sets=marker_sets,
+        marker_alias_lookup=marker_alias_lookup,
+        min_marker_overlap=config.broad_annotation.min_marker_overlap,
+        max_markers_per_label=config.broad_annotation.max_markers_per_label,
+        score_margin_threshold=config.broad_annotation.score_margin_threshold,
+        unknown_label=config.broad_annotation.unknown_label,
+    )
+    _apply_cluster_annotations(
+        clustered,
+        cluster_key=BROAD_CLUSTER_KEY,
+        assignments=broad_assignments,
+        atlas_label_key=BROAD_ATLAS_LABEL_KEY,
+        broad_class_key=BROAD_CLASS_KEY,
+        metric_prefix="broad",
+    )
+    artifacts.update(
+        _write_annotation_artifacts(
+            output_dir,
+            prefix=f"{sample_id}_broad",
+            assignments=broad_assignments,
+            scores=broad_scores,
+            markers=broad_markers,
+            heatmap_title=f"{sample_id} broad atlas marker scores",
+            dpi=config.figure_dpi,
+        )
+    )
+    artifacts.update(
+        _save_round_plots(
+            clustered,
+            output_dir=output_dir,
+            prefix=f"{sample_id}_broad",
+            colors=["total_counts", "n_genes_by_counts", BROAD_CLUSTER_KEY],
+            spatial_color=BROAD_CLASS_KEY,
+            grid_color=BROAD_CLASS_KEY,
+            spatial_point_size=config.spatial_scatter_point_size,
+            grid_point_size=config.spatial_point_size,
+            dpi=config.figure_dpi,
+        )
+    )
+
+    _initialize_hierarchical_obs(clustered)
+    branch_manifest: dict[str, Any] = {}
+    for broad_class in _ordered_obs_values(clustered, BROAD_CLASS_KEY):
+        branch_mask = (
+            clustered.obs[BROAD_CLASS_KEY].astype(str).to_numpy() == broad_class
+        )
+        branch_cells = list(clustered.obs_names[branch_mask].astype(str))
+        branch_token = _safe_token(broad_class)
+        if len(branch_cells) < config.min_branch_cells:
+            _assign_unclustered_branch(
+                clustered,
+                cell_ids=branch_cells,
+                broad_class=broad_class,
+                reason="too_few_cells",
+            )
+            branch_manifest[broad_class] = {
+                "n_cells": len(branch_cells),
+                "clustered": False,
+                "reason": "too_few_cells",
+            }
+            continue
+
+        if broad_class == NEURON_CLASS:
+            branch_manifest[broad_class] = _run_neuron_hierarchy(
+                clustered,
+                cell_ids=branch_cells,
+                config=config,
+                marker_sets=marker_sets,
+                marker_alias_lookup=marker_alias_lookup,
+                output_dir=output_dir / f"branch_{branch_token}",
+                sample_id=sample_id,
+                artifacts=artifacts,
+            )
+        else:
+            branch_manifest[broad_class] = _run_leaf_branch_subclustering(
+                clustered,
+                cell_ids=branch_cells,
+                config=config,
+                broad_class=broad_class,
+                output_dir=output_dir / f"branch_{branch_token}",
+                sample_id=sample_id,
+                artifacts=artifacts,
+            )
+
+    clustered.obs[SUBCLUSTER_LABEL_KEY] = clustered.obs[SUBCLUSTER_LABEL_KEY].astype(
+        "category"
+    )
+    clustered.obs[HIERARCHICAL_CLUSTER_KEY] = clustered.obs[
+        HIERARCHICAL_CLUSTER_KEY
+    ].astype("category")
+    clustered.obs[NEURON_SPLIT_KEY] = clustered.obs[NEURON_SPLIT_KEY].astype("category")
+    manifest_path = output_dir / f"{sample_id}_hierarchical_manifest.json"
+    artifacts["hierarchical_manifest"] = manifest_path
+    clustered.uns[HIERARCHICAL_UNS_KEY] = {
+        "enabled": True,
+        "broad_cluster_key": BROAD_CLUSTER_KEY,
+        "broad_atlas_label_key": BROAD_ATLAS_LABEL_KEY,
+        "broad_class_key": BROAD_CLASS_KEY,
+        "subcluster_label_key": SUBCLUSTER_LABEL_KEY,
+        "hierarchical_cluster_key": HIERARCHICAL_CLUSTER_KEY,
+        "neuron_split_key": NEURON_SPLIT_KEY,
+        "min_branch_cells": int(config.min_branch_cells),
+        "branch_manifest": branch_manifest,
+        "artifacts": {key: str(value) for key, value in artifacts.items()},
+    }
+    manifest_path.write_text(
+        json.dumps(clustered.uns[HIERARCHICAL_UNS_KEY], indent=2) + "\n"
+    )
+    return clustered, artifacts
+
+
+def _load_configured_marker_sets(
+    config: ClusteringSquidpyConfig,
+) -> list[AtlasMarkerSet]:
+    annotation = config.broad_annotation
+    marker_lookup_path = annotation.marker_lookup_path
+    taxonomy_metadata_path = annotation.taxonomy_metadata_path
+    if taxonomy_metadata_path is None and annotation.reference_cache_dir is not None:
+        taxonomy_metadata_path = _find_cached_taxonomy_metadata(
+            annotation.reference_cache_dir
+        )
+    if marker_lookup_path is None or taxonomy_metadata_path is None:
+        raise ValueError(
+            "hierarchical clustering requires broad_annotation.marker_lookup_path "
+            "and broad_annotation.taxonomy_metadata_path or reference_cache_dir"
+        )
+    marker_sets = load_atlas_marker_sets(
+        marker_lookup_path,
+        taxonomy_metadata_path,
+        marker_level=annotation.marker_level,
+        cluster_membership_path=annotation.cluster_membership_path,
+    )
+    if not marker_sets:
+        raise ValueError(
+            "No atlas marker sets were loaded from "
+            f"{marker_lookup_path} at marker_level={annotation.marker_level!r}"
+        )
+    return marker_sets
+
+
+def _find_cached_taxonomy_metadata(cache_dir: Path | str) -> Path | None:
+    candidates = sorted(
+        Path(cache_dir).glob(
+            "abc_whb/metadata/WHB-taxonomy/*/cluster_annotation_term.csv"
+        )
+    )
+    return candidates[-1] if candidates else None
+
+
+def _load_configured_marker_alias_lookup(
+    config: ClusteringSquidpyConfig,
+) -> dict[str, str]:
+    annotation = config.broad_annotation
+    paths = list(annotation.reference_gene_metadata_paths)
+    if not paths and annotation.reference_cache_dir is not None:
+        paths = _find_cached_reference_gene_metadata_paths(
+            annotation.reference_cache_dir
+        )
+    if not paths:
+        return {}
+
+    lookup: dict[str, str] = {}
+    for path in paths:
+        lookup.update(_reference_gene_symbol_lookup_from_h5ad(path))
+    if lookup:
+        logger.info(
+            "Loaded %d marker ID aliases from reference gene metadata.",
+            len(lookup),
+        )
+    return lookup
+
+
+def _find_cached_reference_gene_metadata_paths(cache_dir: Path | str) -> list[Path]:
+    return sorted(
+        Path(cache_dir).glob(
+            "abc_whb/expression_matrices/WHB-10Xv3/*/WHB-10Xv3-*-raw.h5ad"
+        )
+    )
+
+
+def _reference_gene_symbol_lookup_from_h5ad(path: Path | str) -> dict[str, str]:
+    path = Path(path)
+    if not path.exists():
+        logger.warning("Reference gene metadata H5AD does not exist: %s", path)
+        return {}
+
+    try:
+        reference = ad.read_h5ad(path, backed="r")
+    except Exception as exc:  # pragma: no cover - defensive around large H5AD IO
+        logger.warning("Could not read reference gene metadata from %s: %s", path, exc)
+        return {}
+    try:
+        if "gene_symbol" not in reference.var:
+            return {}
+        lookup: dict[str, str] = {}
+        ensembl_ids = reference.var_names.astype(str)
+        symbols = reference.var["gene_symbol"].astype(str).to_numpy()
+        for ensembl_id, symbol in zip(ensembl_ids, symbols, strict=True):
+            ensembl = str(ensembl_id).strip()
+            gene_symbol = str(symbol).strip()
+            if not ensembl or not gene_symbol or gene_symbol.lower() in {"nan", "none"}:
+                continue
+            lookup.setdefault(_normalize_marker_id(ensembl), gene_symbol)
+            lookup.setdefault(_normalize_marker_id(gene_symbol), ensembl)
+        return lookup
+    finally:
+        reference.file.close()
+
+
+def _effective_round_params(
+    config: ClusteringSquidpyConfig,
+    round_config: Any,
+    *,
+    leiden_resolution: float | None = None,
+) -> RoundParams:
+    return RoundParams(
+        min_counts=int(
+            config.min_counts
+            if round_config.min_counts is None
+            else round_config.min_counts
+        ),
+        min_cells=int(
+            config.min_cells
+            if round_config.min_cells is None
+            else round_config.min_cells
+        ),
+        n_pcs=int(config.n_pcs if round_config.n_pcs is None else round_config.n_pcs),
+        n_neighbors=int(
+            config.n_neighbors
+            if round_config.n_neighbors is None
+            else round_config.n_neighbors
+        ),
+        leiden_resolution=float(
+            round_config.leiden_resolution
+            if leiden_resolution is None
+            else leiden_resolution
+        ),
+        umap_min_dist=float(
+            config.umap_min_dist
+            if round_config.umap_min_dist is None
+            else round_config.umap_min_dist
+        ),
+        umap_spread=float(
+            config.umap_spread
+            if round_config.umap_spread is None
+            else round_config.umap_spread
+        ),
+    )
+
+
+def _run_configured_round(
+    adata: ad.AnnData,
+    config: ClusteringSquidpyConfig,
+    params: RoundParams,
+    *,
+    key_added: str,
+    input_layer: str | None,
+    drop_control_features: bool,
+) -> ad.AnnData:
+    return run_scanpy_clustering(
+        adata,
+        drop_control_features=drop_control_features,
+        min_counts=params.min_counts,
+        min_cells=params.min_cells,
+        normalize_target_sum=config.normalize_target_sum,
+        normalize_exclude_highly_expressed=config.normalize_exclude_highly_expressed,
+        normalize_max_fraction=config.normalize_max_fraction,
+        n_pcs=params.n_pcs,
+        n_neighbors=params.n_neighbors,
+        leiden_resolution=params.leiden_resolution,
+        umap_min_dist=params.umap_min_dist,
+        umap_spread=params.umap_spread,
+        random_seed=config.random_seed,
+        use_gpu=config.use_gpu,
+        key_added=key_added,
+        input_layer=input_layer,
+    )
+
+
+def _apply_cluster_annotations(
+    adata: ad.AnnData,
+    *,
+    cluster_key: str,
+    assignments: pd.DataFrame,
+    atlas_label_key: str,
+    broad_class_key: str,
+    metric_prefix: str,
+) -> None:
+    mapping = assignments.set_index("cluster", drop=False)
+    cluster_values = pd.Series(
+        adata.obs[cluster_key],
+        index=adata.obs_names,
+    ).astype(str)
+    adata.obs[atlas_label_key] = pd.Categorical(
+        cluster_values.map(mapping["atlas_label"]).fillna(UNKNOWN_LABEL)
+    )
+    adata.obs[broad_class_key] = pd.Categorical(
+        cluster_values.map(mapping["broad_class"]).fillna(UNKNOWN_LABEL)
+    )
+    for source, target_suffix in [
+        ("score", "score"),
+        ("score_margin", "score_margin"),
+        ("n_markers", "n_markers"),
+    ]:
+        adata.obs[f"{metric_prefix}_annotation_{target_suffix}"] = cluster_values.map(
+            mapping[source]
+        ).to_numpy()
+
+
+def _write_annotation_artifacts(
+    output_dir: Path,
+    *,
+    prefix: str,
+    assignments: pd.DataFrame,
+    scores: pd.DataFrame,
+    markers: pd.DataFrame,
+    heatmap_title: str,
+    dpi: int,
+) -> dict[str, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assignment_path = output_dir / f"{prefix}_cluster_annotation.csv"
+    scores_path = output_dir / f"{prefix}_annotation_scores.csv"
+    markers_path = output_dir / f"{prefix}_resolved_markers.csv"
+    heatmap_path = _plot_output_dir(output_dir, "annotation") / (
+        f"{prefix}_annotation_score_heatmap.png"
+    )
+    assignments.to_csv(assignment_path, index=False)
+    scores.to_csv(scores_path, index=False)
+    markers.to_csv(markers_path, index=False)
+    plot_annotation_score_heatmap(scores, heatmap_path, title=heatmap_title, dpi=dpi)
+    return {
+        f"{prefix}_cluster_annotation": assignment_path,
+        f"{prefix}_annotation_scores": scores_path,
+        f"{prefix}_resolved_markers": markers_path,
+        f"{prefix}_annotation_score_heatmap": heatmap_path,
+    }
+
+
+def _save_round_plots(
+    adata: ad.AnnData,
+    *,
+    output_dir: Path,
+    prefix: str,
+    colors: list[str],
+    spatial_color: str,
+    grid_color: str,
+    spatial_point_size: float,
+    grid_point_size: float,
+    dpi: int,
+) -> dict[str, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        f"{prefix}_umap": plot_umap(
+            adata,
+            _plot_output_dir(output_dir, "umap") / f"{prefix}_umap.png",
+            color=colors,
+            dpi=dpi,
+        ),
+        f"{prefix}_spatial": plot_spatial_scatter(
+            adata,
+            _plot_output_dir(output_dir, "spatial") / f"{prefix}_spatial.png",
+            color=spatial_color,
+            point_size=spatial_point_size,
+            dpi=dpi,
+        ),
+        f"{prefix}_spatial_grid": plot_spatial_cluster_grid(
+            adata,
+            _plot_output_dir(output_dir, "spatial_grid") / f"{prefix}_spatial_grid.png",
+            color=grid_color,
+            point_size_highlight=grid_point_size,
+            dpi=dpi,
+        ),
+    }
+    return paths
+
+
+def _save_branch_gene_dotplot(
+    adata: ad.AnnData,
+    *,
+    output_dir: Path,
+    prefix: str,
+    group_key: str,
+    dpi: int,
+) -> dict[str, Path]:
+    genes = _panel_genes_for_dotplot(adata)
+    mean_expression, fraction_expression = compute_group_gene_summary(
+        adata,
+        genes,
+        groupby=group_key,
+    )
+    gene_order = _cluster_gene_order(mean_expression)
+    table_dir = _table_output_dir(output_dir, "dotplot")
+    plot_dir = _plot_output_dir(output_dir, "dotplot")
+    mean_path = table_dir / f"{prefix}_gene_mean_expression.csv"
+    fraction_path = table_dir / f"{prefix}_gene_fraction_expressing.csv"
+    dotplot_path = plot_dir / f"{prefix}_gene_dotplot.png"
+    mean_expression.loc[:, gene_order].to_csv(mean_path)
+    fraction_expression.loc[:, gene_order].to_csv(fraction_path)
+    plot_group_gene_dotplot(
+        mean_expression,
+        fraction_expression,
+        dotplot_path,
+        gene_order=gene_order,
+        cluster_genes=False,
+        x_axis_label=group_key,
+        y_axis_label="Panel genes",
+        title=f"{prefix} panel gene expression by subcluster",
+        dpi=max(int(dpi), 220),
+    )
+    return {
+        f"{prefix}_gene_dotplot": dotplot_path,
+        f"{prefix}_gene_mean_expression": mean_path,
+        f"{prefix}_gene_fraction_expressing": fraction_path,
+    }
+
+
+def _panel_genes_for_dotplot(adata: ad.AnnData) -> list[str]:
+    if adata.n_vars == 0:
+        return []
+    control_mask = _control_feature_mask(adata)
+    genes = [
+        str(gene)
+        for gene, is_control in zip(
+            adata.var_names.astype(str),
+            control_mask,
+            strict=True,
+        )
+        if not bool(is_control)
+    ]
+    return genes or [str(gene) for gene in adata.var_names.astype(str)]
+
+
+def _plot_output_dir(output_dir: Path, plot_type: str) -> Path:
+    path = output_dir / "plots" / plot_type
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _table_output_dir(output_dir: Path, table_type: str) -> Path:
+    path = output_dir / "tables" / table_type
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _initialize_hierarchical_obs(adata: ad.AnnData) -> None:
+    adata.obs[SUBCLUSTER_LABEL_KEY] = pd.Series(
+        "unassigned",
+        index=adata.obs_names,
+        dtype="object",
+    )
+    adata.obs[HIERARCHICAL_CLUSTER_KEY] = pd.Series(
+        "unassigned",
+        index=adata.obs_names,
+        dtype="object",
+    )
+    adata.obs[NEURON_SPLIT_KEY] = pd.Series(
+        "not_neuron",
+        index=adata.obs_names,
+        dtype="object",
+    )
+
+
+def _ordered_obs_values(adata: ad.AnnData, key: str) -> list[str]:
+    values = pd.Series(adata.obs[key], index=adata.obs_names).astype(str)
+    return [
+        str(value)
+        for value in values.value_counts(sort=False).index
+        if str(value) != "nan"
+    ]
+
+
+def _assign_unclustered_branch(
+    adata: ad.AnnData,
+    *,
+    cell_ids: list[str],
+    broad_class: str,
+    reason: str,
+) -> None:
+    label = f"{broad_class}:not_subclustered"
+    subcluster_label = (
+        "not_subclustered"
+        if reason == "too_few_cells"
+        else f"not_subclustered_{reason}"
+    )
+    adata.obs.loc[cell_ids, SUBCLUSTER_LABEL_KEY] = subcluster_label
+    adata.obs.loc[cell_ids, HIERARCHICAL_CLUSTER_KEY] = label
+    if broad_class == NEURON_CLASS:
+        adata.obs.loc[cell_ids, NEURON_SPLIT_KEY] = reason
+
+
+def _run_leaf_branch_subclustering(
+    clustered: ad.AnnData,
+    *,
+    cell_ids: list[str],
+    config: ClusteringSquidpyConfig,
+    broad_class: str,
+    output_dir: Path,
+    sample_id: str,
+    artifacts: dict[str, Path],
+) -> dict[str, Any]:
+    branch = clustered[cell_ids, :].copy()
+    resolution = config.subcluster_resolution_overrides.get(
+        broad_class,
+        config.subcluster_round.leiden_resolution,
+    )
+    params = _effective_round_params(
+        config,
+        config.subcluster_round,
+        leiden_resolution=resolution,
+    )
+    try:
+        branch = _run_configured_round(
+            branch,
+            config,
+            params,
+            key_added="leiden_subcluster",
+            input_layer="counts",
+            drop_control_features=False,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping subclustering for %s after filtering failed: %s",
+            broad_class,
+            exc,
+        )
+        _assign_unclustered_branch(
+            clustered,
+            cell_ids=cell_ids,
+            broad_class=broad_class,
+            reason="filtering_failed",
+        )
+        return {
+            "n_cells": len(cell_ids),
+            "clustered": False,
+            "reason": "filtering_failed",
+            "error": str(exc),
+        }
+    filtered_out_cells = _missing_cell_ids(cell_ids, branch)
+    if filtered_out_cells:
+        _assign_unclustered_branch(
+            clustered,
+            cell_ids=filtered_out_cells,
+            broad_class=broad_class,
+            reason="filtered_out",
+        )
+    prefix = f"{sample_id}_{_safe_token(broad_class)}_subcluster"
+    artifacts.update(
+        _save_round_plots(
+            branch,
+            output_dir=output_dir,
+            prefix=prefix,
+            colors=["total_counts", "n_genes_by_counts", "leiden_subcluster"],
+            spatial_color="leiden_subcluster",
+            grid_color="leiden_subcluster",
+            spatial_point_size=config.spatial_scatter_point_size,
+            grid_point_size=config.spatial_point_size,
+            dpi=config.figure_dpi,
+        )
+    )
+    artifacts.update(
+        _save_branch_gene_dotplot(
+            branch,
+            output_dir=output_dir,
+            prefix=prefix,
+            group_key="leiden_subcluster",
+            dpi=config.figure_dpi,
+        )
+    )
+    h5ad_path = save_clustered_adata(branch, output_dir / f"{prefix}.h5ad")
+    artifacts[f"{prefix}_h5ad"] = h5ad_path
+    _assign_branch_labels(
+        clustered,
+        branch=branch,
+        broad_class=broad_class,
+        cluster_key="leiden_subcluster",
+    )
+    return {
+        "n_cells": len(cell_ids),
+        "n_clustered_cells": int(branch.n_obs),
+        "n_filtered_out_cells": len(filtered_out_cells),
+        "clustered": True,
+        "leiden_resolution": float(params.leiden_resolution),
+        "n_subclusters": int(branch.obs["leiden_subcluster"].nunique()),
+    }
+
+
+def _assign_branch_labels(
+    target: ad.AnnData,
+    *,
+    branch: ad.AnnData,
+    broad_class: str,
+    cluster_key: str,
+    neuron_split: str | None = None,
+) -> None:
+    labels = pd.Series(branch.obs[cluster_key], index=branch.obs_names).astype(str)
+    for obs_name, local_label in labels.items():
+        subcluster = str(local_label)
+        if neuron_split is None:
+            hierarchical = f"{broad_class}:{subcluster}"
+        else:
+            hierarchical = f"{broad_class}/{neuron_split}:{subcluster}"
+            target.obs.at[obs_name, NEURON_SPLIT_KEY] = neuron_split
+        target.obs.at[obs_name, SUBCLUSTER_LABEL_KEY] = subcluster
+        target.obs.at[obs_name, HIERARCHICAL_CLUSTER_KEY] = hierarchical
+
+
+def _run_neuron_hierarchy(
+    clustered: ad.AnnData,
+    *,
+    cell_ids: list[str],
+    config: ClusteringSquidpyConfig,
+    marker_sets: list[AtlasMarkerSet],
+    marker_alias_lookup: dict[str, str],
+    output_dir: Path,
+    sample_id: str,
+    artifacts: dict[str, Path],
+) -> dict[str, Any]:
+    neuron_branch = clustered[cell_ids, :].copy()
+    split_params = _effective_round_params(config, config.neuron_split_round)
+    try:
+        neuron_branch = _run_configured_round(
+            neuron_branch,
+            config,
+            split_params,
+            key_added="leiden_neuron_split",
+            input_layer="counts",
+            drop_control_features=False,
+        )
+    except ValueError as exc:
+        logger.warning("Skipping neuron hierarchy after filtering failed: %s", exc)
+        _assign_unclustered_branch(
+            clustered,
+            cell_ids=cell_ids,
+            broad_class=NEURON_CLASS,
+            reason="filtering_failed",
+        )
+        return {
+            "n_cells": len(cell_ids),
+            "clustered": False,
+            "reason": "filtering_failed",
+            "error": str(exc),
+        }
+    split_marker_sets = _make_neuron_split_marker_sets(marker_sets)
+    split_assignments, split_scores, split_markers = score_clusters_by_atlas_markers(
+        neuron_branch,
+        cluster_key="leiden_neuron_split",
+        marker_sets=split_marker_sets,
+        marker_alias_lookup=marker_alias_lookup,
+        min_marker_overlap=config.broad_annotation.min_marker_overlap,
+        max_markers_per_label=config.broad_annotation.max_markers_per_label,
+        score_margin_threshold=config.broad_annotation.score_margin_threshold,
+        unknown_label="Other",
+    )
+    _apply_cluster_annotations(
+        neuron_branch,
+        cluster_key="leiden_neuron_split",
+        assignments=split_assignments,
+        atlas_label_key="neuron_split_atlas_label",
+        broad_class_key=NEURON_SPLIT_KEY,
+        metric_prefix="neuron_split",
+    )
+    prefix = f"{sample_id}_neurons_split"
+    artifacts.update(
+        _write_annotation_artifacts(
+            output_dir,
+            prefix=prefix,
+            assignments=split_assignments,
+            scores=split_scores,
+            markers=split_markers,
+            heatmap_title=f"{sample_id} neuron split marker scores",
+            dpi=config.figure_dpi,
+        )
+    )
+    artifacts.update(
+        _save_round_plots(
+            neuron_branch,
+            output_dir=output_dir,
+            prefix=prefix,
+            colors=["total_counts", "n_genes_by_counts", "leiden_neuron_split"],
+            spatial_color=NEURON_SPLIT_KEY,
+            grid_color=NEURON_SPLIT_KEY,
+            spatial_point_size=config.spatial_scatter_point_size,
+            grid_point_size=config.spatial_point_size,
+            dpi=config.figure_dpi,
+        )
+    )
+    split_h5ad = save_clustered_adata(neuron_branch, output_dir / f"{prefix}.h5ad")
+    artifacts[f"{prefix}_h5ad"] = split_h5ad
+
+    split_manifest: dict[str, Any] = {}
+    filtered_out_cells = _missing_cell_ids(cell_ids, neuron_branch)
+    if filtered_out_cells:
+        _assign_unclustered_neuron_split(
+            clustered,
+            cell_ids=filtered_out_cells,
+            split_label="filtered_out",
+            reason="neuron_split_filtering",
+        )
+        split_manifest["filtered_out"] = {
+            "n_cells": len(filtered_out_cells),
+            "clustered": False,
+            "reason": "neuron_split_filtering",
+        }
+    for split_label in _ordered_obs_values(neuron_branch, NEURON_SPLIT_KEY):
+        split_mask = neuron_branch.obs[NEURON_SPLIT_KEY].astype(str).to_numpy() == (
+            split_label
+        )
+        split_cells = list(neuron_branch.obs_names[split_mask].astype(str))
+        if len(split_cells) < config.min_branch_cells:
+            _assign_unclustered_neuron_split(
+                clustered,
+                cell_ids=split_cells,
+                split_label=split_label,
+                reason="too_few_cells",
+            )
+            split_manifest[split_label] = {
+                "n_cells": len(split_cells),
+                "clustered": False,
+                "reason": "too_few_cells",
+            }
+            continue
+
+        split_manifest[split_label] = _run_neuron_split_subclustering(
+            clustered,
+            neuron_branch=neuron_branch,
+            cell_ids=split_cells,
+            split_label=split_label,
+            config=config,
+            output_dir=output_dir / f"split_{_safe_token(split_label)}",
+            sample_id=sample_id,
+            artifacts=artifacts,
+        )
+    return {
+        "n_cells": len(cell_ids),
+        "n_split_cells": int(neuron_branch.n_obs),
+        "n_filtered_out_cells": len(filtered_out_cells),
+        "clustered": True,
+        "split_leiden_resolution": float(split_params.leiden_resolution),
+        "splits": split_manifest,
+    }
+
+
+def _make_neuron_split_marker_sets(
+    marker_sets: list[AtlasMarkerSet],
+) -> list[AtlasMarkerSet]:
+    grouped: dict[str, list[str]] = {"Excitatory": [], "Inhibitory": [], "Other": []}
+    for marker_set in marker_sets:
+        if marker_set.broad_class != NEURON_CLASS:
+            continue
+        split = marker_set.neuron_split or _neuron_split_for_supercluster(
+            marker_set.label_name
+        )
+        grouped[split].extend(marker_set.marker_ids)
+
+    split_sets: list[AtlasMarkerSet] = []
+    for split, markers in grouped.items():
+        unique_markers = tuple(dict.fromkeys(markers))
+        split_sets.append(
+            AtlasMarkerSet(
+                level="neuron_split",
+                label_id=split,
+                label_name=split,
+                broad_class=split,
+                marker_ids=unique_markers,
+            )
+        )
+    return split_sets
+
+
+def _neuron_split_for_supercluster(label_name: str) -> str:
+    label = str(label_name).strip().lower()
+    if any(token in label for token in INHIBITORY_SUPERCLUSTER_TOKENS):
+        return "Inhibitory"
+    if any(token in label for token in EXCITATORY_SUPERCLUSTER_TOKENS):
+        return "Excitatory"
+    return "Other"
+
+
+def _assign_unclustered_neuron_split(
+    adata: ad.AnnData,
+    *,
+    cell_ids: list[str],
+    split_label: str,
+    reason: str,
+) -> None:
+    label = f"{NEURON_CLASS}/{split_label}:not_subclustered"
+    adata.obs.loc[cell_ids, NEURON_SPLIT_KEY] = split_label
+    adata.obs.loc[cell_ids, SUBCLUSTER_LABEL_KEY] = f"not_subclustered_{reason}"
+    adata.obs.loc[cell_ids, HIERARCHICAL_CLUSTER_KEY] = label
+
+
+def _run_neuron_split_subclustering(
+    clustered: ad.AnnData,
+    *,
+    neuron_branch: ad.AnnData,
+    cell_ids: list[str],
+    split_label: str,
+    config: ClusteringSquidpyConfig,
+    output_dir: Path,
+    sample_id: str,
+    artifacts: dict[str, Path],
+) -> dict[str, Any]:
+    branch = neuron_branch[cell_ids, :].copy()
+    resolution = config.subcluster_resolution_overrides.get(
+        f"{NEURON_CLASS}/{split_label}",
+        config.subcluster_resolution_overrides.get(
+            split_label,
+            config.neuron_subcluster_round.leiden_resolution,
+        ),
+    )
+    params = _effective_round_params(
+        config,
+        config.neuron_subcluster_round,
+        leiden_resolution=resolution,
+    )
+    try:
+        branch = _run_configured_round(
+            branch,
+            config,
+            params,
+            key_added="leiden_neuron_subcluster",
+            input_layer="counts",
+            drop_control_features=False,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Skipping neuron subclustering for %s after filtering failed: %s",
+            split_label,
+            exc,
+        )
+        _assign_unclustered_neuron_split(
+            clustered,
+            cell_ids=cell_ids,
+            split_label=split_label,
+            reason="filtering_failed",
+        )
+        return {
+            "n_cells": len(cell_ids),
+            "clustered": False,
+            "reason": "filtering_failed",
+            "error": str(exc),
+        }
+    filtered_out_cells = _missing_cell_ids(cell_ids, branch)
+    if filtered_out_cells:
+        _assign_unclustered_neuron_split(
+            clustered,
+            cell_ids=filtered_out_cells,
+            split_label=split_label,
+            reason="filtered_out",
+        )
+    prefix = f"{sample_id}_neurons_{_safe_token(split_label)}_subcluster"
+    artifacts.update(
+        _save_round_plots(
+            branch,
+            output_dir=output_dir,
+            prefix=prefix,
+            colors=[
+                "total_counts",
+                "n_genes_by_counts",
+                "leiden_neuron_subcluster",
+            ],
+            spatial_color="leiden_neuron_subcluster",
+            grid_color="leiden_neuron_subcluster",
+            spatial_point_size=config.spatial_scatter_point_size,
+            grid_point_size=config.spatial_point_size,
+            dpi=config.figure_dpi,
+        )
+    )
+    artifacts.update(
+        _save_branch_gene_dotplot(
+            branch,
+            output_dir=output_dir,
+            prefix=prefix,
+            group_key="leiden_neuron_subcluster",
+            dpi=config.figure_dpi,
+        )
+    )
+    h5ad_path = save_clustered_adata(branch, output_dir / f"{prefix}.h5ad")
+    artifacts[f"{prefix}_h5ad"] = h5ad_path
+    _assign_branch_labels(
+        clustered,
+        branch=branch,
+        broad_class=NEURON_CLASS,
+        cluster_key="leiden_neuron_subcluster",
+        neuron_split=split_label,
+    )
+    return {
+        "n_cells": len(cell_ids),
+        "n_clustered_cells": int(branch.n_obs),
+        "n_filtered_out_cells": len(filtered_out_cells),
+        "clustered": True,
+        "leiden_resolution": float(params.leiden_resolution),
+        "n_subclusters": int(branch.obs["leiden_neuron_subcluster"].nunique()),
+    }
+
+
+def _missing_cell_ids(input_cell_ids: list[str], adata: ad.AnnData) -> list[str]:
+    retained = set(adata.obs_names.astype(str))
+    return [cell_id for cell_id in input_cell_ids if cell_id not in retained]
+
+
+def _safe_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9]+", "_", str(value).strip().lower()).strip("_")
+    return token or "value"
 
 
 def run_clustering_squidpy(
@@ -783,7 +2195,8 @@ def run_clustering_squidpy(
 
         qc_plot = plot_qc_histograms(
             adata,
-            sample_dir / f"{sample.sample_id}_qc_histograms.png",
+            _plot_output_dir(sample_dir, "qc")
+            / f"{sample.sample_id}_qc_histograms.png",
             sample_label=sample.sample_id,
             platform=sample.platform,
             dpi=config.figure_dpi,
@@ -793,38 +2206,65 @@ def run_clustering_squidpy(
             sample_dir / f"{sample.sample_id}_qc_metrics.csv",
         )
 
-        clustered = run_scanpy_clustering(
-            adata,
-            drop_control_features=config.drop_control_features,
-            min_counts=config.min_counts,
-            min_cells=config.min_cells,
-            normalize_target_sum=config.normalize_target_sum,
-            normalize_exclude_highly_expressed=(
-                config.normalize_exclude_highly_expressed
-            ),
-            normalize_max_fraction=config.normalize_max_fraction,
-            n_pcs=config.n_pcs,
-            n_neighbors=config.n_neighbors,
-            leiden_resolution=config.leiden_resolution,
-            umap_min_dist=config.umap_min_dist,
-            umap_spread=config.umap_spread,
-            random_seed=config.random_seed,
-            use_gpu=config.use_gpu,
-        )
+        hierarchical_artifacts: dict[str, Path] = {}
+        if config.hierarchical_enabled:
+            hierarchical_dir = sample_dir / f"{sample.sample_id}_hierarchical"
+            clustered, hierarchical_artifacts = run_hierarchical_scanpy_clustering(
+                adata,
+                config,
+                output_dir=hierarchical_dir,
+                sample_id=sample.sample_id,
+            )
+            umap_colors = [
+                "total_counts",
+                "n_genes_by_counts",
+                BROAD_CLUSTER_KEY,
+                BROAD_CLASS_KEY,
+            ]
+            spatial_color = BROAD_CLASS_KEY
+            spatial_grid_color = BROAD_CLASS_KEY
+        else:
+            clustered = run_scanpy_clustering(
+                adata,
+                drop_control_features=config.drop_control_features,
+                min_counts=config.min_counts,
+                min_cells=config.min_cells,
+                normalize_target_sum=config.normalize_target_sum,
+                normalize_exclude_highly_expressed=(
+                    config.normalize_exclude_highly_expressed
+                ),
+                normalize_max_fraction=config.normalize_max_fraction,
+                n_pcs=config.n_pcs,
+                n_neighbors=config.n_neighbors,
+                leiden_resolution=config.leiden_resolution,
+                umap_min_dist=config.umap_min_dist,
+                umap_spread=config.umap_spread,
+                random_seed=config.random_seed,
+                use_gpu=config.use_gpu,
+            )
+            umap_colors = ["total_counts", "n_genes_by_counts", "leiden"]
+            spatial_color = "leiden"
+            spatial_grid_color = "leiden"
+
         umap_plot = plot_umap(
             clustered,
-            sample_dir / f"{sample.sample_id}_umap.png",
+            _plot_output_dir(sample_dir, "umap") / f"{sample.sample_id}_umap.png",
+            color=umap_colors,
             dpi=config.figure_dpi,
         )
         spatial_plot = plot_spatial_scatter(
             clustered,
-            sample_dir / f"{sample.sample_id}_spatial_scatter_leiden.png",
-            point_size=config.spatial_point_size,
+            _plot_output_dir(sample_dir, "spatial")
+            / f"{sample.sample_id}_spatial_scatter_leiden.png",
+            color=spatial_color,
+            point_size=config.spatial_scatter_point_size,
             dpi=config.figure_dpi,
         )
         spatial_cluster_grid = plot_spatial_cluster_grid(
             clustered,
-            sample_dir / f"{sample.sample_id}_spatial_scatter_leiden_grid.png",
+            _plot_output_dir(sample_dir, "spatial_grid")
+            / f"{sample.sample_id}_spatial_scatter_leiden_grid.png",
+            color=spatial_grid_color,
             point_size_highlight=config.spatial_point_size,
             dpi=config.figure_dpi,
         )
@@ -840,6 +2280,7 @@ def run_clustering_squidpy(
             "spatial_plot": spatial_plot,
             "spatial_cluster_grid": spatial_cluster_grid,
             "h5ad": h5ad,
+            **hierarchical_artifacts,
         }
         del adata, clustered
         force_release(note=f"after clustering_squidpy {sample.sample_id}")
@@ -880,6 +2321,482 @@ def collect_gene_id_lookup_for_samples(
     else:
         logger.warning("No Ensembl ID metadata found in clustering input zarrs.")
     return combined
+
+
+def collapse_atlas_label_to_broad_class(label_name: str) -> str:
+    """Collapse an Allen WHB supercluster label to MerXen's broad classes."""
+    label = str(label_name).strip()
+    if label in NON_NEURON_SUPERCLUSTER_CLASS_MAP:
+        return NON_NEURON_SUPERCLUSTER_CLASS_MAP[label]
+    if label in EXTRA_SUPERCLUSTER_LABELS:
+        return label
+    if label in NEURON_SUPERCLUSTER_LABELS:
+        return NEURON_CLASS
+    lower = label.lower()
+    neuron_tokens = (
+        "neuron",
+        "interneuron",
+        "excitatory",
+        "inhibitory",
+        "intratelencephalic",
+        "corticothalamic",
+    )
+    if any(token in lower for token in neuron_tokens):
+        return NEURON_CLASS
+    return label
+
+
+def load_atlas_marker_sets(
+    marker_lookup_path: Path | str,
+    taxonomy_metadata_path: Path | str,
+    *,
+    marker_level: str = "CCN202210140_SUPC",
+    cluster_membership_path: Path | str | None = None,
+) -> list[AtlasMarkerSet]:
+    """Read MapMyCells query markers and Allen taxonomy labels.
+
+    Args:
+        marker_lookup_path: JSON lookup produced by MapMyCells QueryMarkerRunner.
+        taxonomy_metadata_path: Allen ``cluster_annotation_term.csv`` file.
+        marker_level: Atlas term set to extract, usually WHB supercluster.
+        cluster_membership_path: Optional Allen
+            ``cluster_to_cluster_annotation_membership.csv`` path used to infer
+            neuronal Exc/Inh/Other splits from neurotransmitter metadata.
+
+    Returns:
+        Marker sets with atlas labels and MerXen broad-class mapping.
+    """
+    marker_lookup = _read_marker_lookup(marker_lookup_path)
+    taxonomy = _read_taxonomy_metadata(taxonomy_metadata_path)
+    taxonomy = taxonomy[
+        taxonomy["cluster_annotation_term_set_label"].astype(str) == marker_level
+    ].copy()
+    label_to_name = dict(
+        zip(
+            taxonomy["label"].astype(str),
+            taxonomy["name"].astype(str),
+            strict=False,
+        )
+    )
+    split_lookup = (
+        _supercluster_neuron_split_lookup(
+            cluster_membership_path,
+            supercluster_level=marker_level,
+        )
+        if cluster_membership_path is not None
+        else {}
+    )
+
+    marker_sets: list[AtlasMarkerSet] = []
+    for key, marker_ids in marker_lookup.items():
+        if "/" not in key or not isinstance(marker_ids, list):
+            continue
+        level, label_id = key.split("/", 1)
+        if level != marker_level or label_id not in label_to_name:
+            continue
+        label_name = label_to_name[label_id]
+        cleaned_markers = tuple(
+            str(marker).strip() for marker in marker_ids if str(marker).strip()
+        )
+        marker_sets.append(
+            AtlasMarkerSet(
+                level=level,
+                label_id=label_id,
+                label_name=label_name,
+                broad_class=collapse_atlas_label_to_broad_class(label_name),
+                marker_ids=cleaned_markers,
+                neuron_split=split_lookup.get(
+                    label_id,
+                    (
+                        _neuron_split_for_supercluster(label_name)
+                        if collapse_atlas_label_to_broad_class(label_name)
+                        == NEURON_CLASS
+                        else ""
+                    ),
+                ),
+            )
+        )
+    return marker_sets
+
+
+def _supercluster_neuron_split_lookup(
+    cluster_membership_path: Path | str,
+    *,
+    supercluster_level: str,
+) -> dict[str, str]:
+    path = Path(cluster_membership_path)
+    if not path.exists():
+        logger.warning("Allen cluster membership metadata does not exist: %s", path)
+        return {}
+    membership = pd.read_csv(path)
+    required = {
+        "cluster_annotation_term_label",
+        "cluster_annotation_term_set_label",
+        "cluster_alias",
+        "cluster_annotation_term_name",
+    }
+    missing = required.difference(membership.columns)
+    if missing:
+        logger.warning(
+            "Allen cluster membership metadata missing columns %s: %s",
+            sorted(missing),
+            path,
+        )
+        return {}
+
+    term_set = membership["cluster_annotation_term_set_label"].astype(str)
+    supercluster_rows = membership.loc[
+        term_set == supercluster_level,
+        ["cluster_alias", "cluster_annotation_term_label"],
+    ].rename(columns={"cluster_annotation_term_label": "supercluster_label"})
+    neurotransmitter_rows = membership.loc[
+        term_set == NEUROTRANSMITTER_LEVEL,
+        ["cluster_alias", "cluster_annotation_term_name"],
+    ].rename(columns={"cluster_annotation_term_name": "neurotransmitter"})
+    joined = supercluster_rows.merge(
+        neurotransmitter_rows,
+        on="cluster_alias",
+        how="inner",
+    )
+    if joined.empty:
+        return {}
+
+    split_lookup: dict[str, str] = {}
+    for label_id, group in joined.groupby("supercluster_label", sort=False):
+        splits = [
+            _neuron_split_for_neurotransmitter(value)
+            for value in group["neurotransmitter"].astype(str)
+        ]
+        counts = pd.Series(splits, dtype="object").value_counts()
+        if counts.empty:
+            continue
+        best_split = str(counts.index[0])
+        if len(counts) > 1 and int(counts.iloc[0]) == int(counts.iloc[1]):
+            best_split = "Other"
+        split_lookup[str(label_id)] = best_split
+    return split_lookup
+
+
+def _neuron_split_for_neurotransmitter(value: str) -> str:
+    label = str(value).upper()
+    has_inhibitory = "GABA" in label or "GLY" in label
+    has_excitatory = "VGLUT" in label
+    if has_inhibitory and not has_excitatory:
+        return "Inhibitory"
+    if has_excitatory and not has_inhibitory:
+        return "Excitatory"
+    return "Other"
+
+
+def score_clusters_by_atlas_markers(
+    adata: ad.AnnData,
+    *,
+    cluster_key: str,
+    marker_sets: list[AtlasMarkerSet],
+    marker_alias_lookup: dict[str, str] | None = None,
+    min_marker_overlap: int = 3,
+    max_markers_per_label: int | None = 80,
+    score_margin_threshold: float = 0.0,
+    unknown_label: str = UNKNOWN_LABEL,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Score de novo clusters against atlas marker sets.
+
+    Scores are mean gene-wise z-scores over available marker genes. Z-scores are
+    computed across de novo cluster means, so each marker contributes relative
+    enrichment rather than absolute abundance.
+    """
+    if cluster_key not in adata.obs:
+        raise KeyError(f"Expected adata.obs[{cluster_key!r}] for atlas scoring.")
+
+    mean_expression = _mean_expression_by_cluster(adata, cluster_key)
+    if mean_expression.empty:
+        return (
+            pd.DataFrame(columns=ASSIGNMENT_COLUMNS),
+            pd.DataFrame(columns=SCORE_COLUMNS),
+            pd.DataFrame(columns=MARKER_COLUMNS),
+        )
+
+    z_expression = _gene_zscore(mean_expression)
+    marker_lookup = _feature_marker_lookup(adata)
+    score_rows: list[dict[str, Any]] = []
+    marker_rows: list[dict[str, Any]] = []
+
+    for marker_set in marker_sets:
+        marker_indices, resolved_markers = _resolve_marker_indices(
+            adata,
+            marker_set.marker_ids,
+            marker_lookup=marker_lookup,
+            marker_alias_lookup=marker_alias_lookup,
+            max_markers=max_markers_per_label,
+        )
+        marker_rows.append(
+            {
+                "label_id": marker_set.label_id,
+                "label_name": marker_set.label_name,
+                "broad_class": marker_set.broad_class,
+                "neuron_split": marker_set.neuron_split,
+                "n_reference_markers": len(marker_set.marker_ids),
+                "n_resolved_markers": len(resolved_markers),
+                "resolved_markers": ";".join(resolved_markers),
+            }
+        )
+        if len(marker_indices) < int(min_marker_overlap):
+            continue
+        scores = z_expression.iloc[:, marker_indices].mean(axis=1)
+        for cluster, score in scores.items():
+            score_rows.append(
+                {
+                    "cluster": str(cluster),
+                    "label_id": marker_set.label_id,
+                    "atlas_label": marker_set.label_name,
+                    "broad_class": marker_set.broad_class,
+                    "score": float(score),
+                    "n_markers": len(marker_indices),
+                    "resolved_markers": ";".join(resolved_markers),
+                }
+            )
+
+    score_table = pd.DataFrame(score_rows, columns=SCORE_COLUMNS)
+    marker_table = pd.DataFrame(marker_rows, columns=MARKER_COLUMNS)
+    assignments = _best_marker_assignments(
+        clusters=[str(cluster) for cluster in mean_expression.index],
+        score_table=score_table,
+        score_margin_threshold=score_margin_threshold,
+        unknown_label=unknown_label,
+    )
+    return assignments, score_table, marker_table
+
+
+def plot_annotation_score_heatmap(
+    score_table: pd.DataFrame,
+    output_path: Path | str,
+    *,
+    title: str,
+    dpi: int = 180,
+) -> Path:
+    """Write a cluster-by-atlas-label score heatmap."""
+    output_path = prepare_plot_output(output_path)
+    if score_table.empty:
+        fig, ax = plt.subplots(figsize=(7.0, 4.0))
+        _plot_empty_spatial_grid_axis(ax, "No atlas marker scores were available.")
+        ax.set_title(title)
+        save_figure(fig, output_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
+        return output_path
+
+    score_matrix = score_table.pivot_table(
+        index="cluster",
+        columns="atlas_label",
+        values="score",
+        aggfunc="max",
+    ).fillna(0.0)
+    height = max(3.5, 0.35 * len(score_matrix.index) + 1.5)
+    width = max(7.0, 0.26 * len(score_matrix.columns) + 3.0)
+    fig, ax = plt.subplots(figsize=(width, height))
+    sns.heatmap(score_matrix, cmap="vlag", center=0.0, ax=ax)
+    ax.set_title(title)
+    ax.set_xlabel("Atlas label")
+    ax.set_ylabel("De novo cluster")
+    ax.tick_params(axis="x", labelrotation=75, labelsize=7)
+    ax.tick_params(axis="y", labelsize=7)
+    fig.tight_layout()
+    save_figure(fig, output_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _read_marker_lookup(marker_lookup_path: Path | str) -> dict[str, Any]:
+    path = Path(marker_lookup_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Atlas marker lookup does not exist: {path}")
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"Atlas marker lookup is not a JSON object: {path}")
+    return cast(dict[str, Any], payload)
+
+
+def _read_taxonomy_metadata(taxonomy_metadata_path: Path | str) -> pd.DataFrame:
+    path = Path(taxonomy_metadata_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Allen taxonomy metadata does not exist: {path}")
+    taxonomy = pd.read_csv(path)
+    required = {"label", "name", "cluster_annotation_term_set_label"}
+    missing = required.difference(taxonomy.columns)
+    if missing:
+        raise KeyError(
+            f"Allen taxonomy metadata missing columns {sorted(missing)}: {path}"
+        )
+    return taxonomy
+
+
+def _best_marker_assignments(
+    *,
+    clusters: list[str],
+    score_table: pd.DataFrame,
+    score_margin_threshold: float,
+    unknown_label: str,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for cluster in clusters:
+        cluster_scores = score_table[score_table["cluster"].astype(str) == cluster]
+        if cluster_scores.empty:
+            rows.append(_unknown_assignment_row(cluster, unknown_label))
+            continue
+
+        ordered = cluster_scores.sort_values("score", ascending=False).reset_index(
+            drop=True
+        )
+        best = ordered.iloc[0]
+        runner_up = ordered.iloc[1] if len(ordered) > 1 else None
+        runner_score = (
+            float(runner_up["score"]) if runner_up is not None else float("nan")
+        )
+        margin = (
+            float(best["score"]) - runner_score
+            if np.isfinite(runner_score)
+            else float("inf")
+        )
+        if margin < float(score_margin_threshold):
+            rows.append(_unknown_assignment_row(cluster, unknown_label))
+            continue
+
+        rows.append(
+            {
+                "cluster": cluster,
+                "atlas_label": str(best["atlas_label"]),
+                "broad_class": str(best["broad_class"]),
+                "score": float(best["score"]),
+                "runner_up_label": (
+                    str(runner_up["atlas_label"]) if runner_up is not None else ""
+                ),
+                "runner_up_score": runner_score,
+                "score_margin": margin,
+                "n_markers": int(best["n_markers"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _unknown_assignment_row(cluster: str, unknown_label: str) -> dict[str, Any]:
+    return {
+        "cluster": cluster,
+        "atlas_label": unknown_label,
+        "broad_class": unknown_label,
+        "score": float("nan"),
+        "runner_up_label": "",
+        "runner_up_score": float("nan"),
+        "score_margin": float("nan"),
+        "n_markers": 0,
+    }
+
+
+def _mean_expression_by_cluster(
+    adata: ad.AnnData,
+    cluster_key: str,
+) -> pd.DataFrame:
+    labels = pd.Series(adata.obs[cluster_key], index=adata.obs_names)
+    labels = labels.astype("string").fillna("unassigned")
+    categories = [str(label) for label in pd.unique(labels)]
+    matrix = _matrix_to_dense(adata.X).astype(float, copy=False)
+    means: list[np.ndarray] = []
+    label_values = labels.astype(str).to_numpy()
+    for category in categories:
+        mask = label_values == category
+        if mask.any():
+            means.append(np.asarray(matrix[mask, :].mean(axis=0)).reshape(-1))
+        else:
+            means.append(np.zeros(adata.n_vars, dtype=float))
+    return pd.DataFrame(
+        np.vstack(means) if means else np.empty((0, adata.n_vars)),
+        index=pd.Index(categories, name=cluster_key),
+        columns=pd.Index(adata.var_names.astype(str), name="gene"),
+    )
+
+
+def _gene_zscore(mean_expression: pd.DataFrame) -> pd.DataFrame:
+    values = mean_expression.to_numpy(dtype=float)
+    centered = values - np.nanmean(values, axis=0, keepdims=True)
+    scale = np.nanstd(centered, axis=0, keepdims=True)
+    scale[~np.isfinite(scale) | (scale <= 0)] = 1.0
+    z_values = centered / scale
+    z_values[~np.isfinite(z_values)] = 0.0
+    return pd.DataFrame(
+        z_values,
+        index=mean_expression.index,
+        columns=mean_expression.columns,
+    )
+
+
+def _feature_marker_lookup(adata: ad.AnnData) -> dict[str, int]:
+    lookup: dict[str, int] = {}
+    for column in GENE_ID_COLUMN_CANDIDATES:
+        if column not in adata.var:
+            continue
+        values = adata.var[column].astype(str).to_numpy()
+        for idx, value in enumerate(values):
+            cleaned = str(value).strip()
+            if cleaned and cleaned.lower() not in {"nan", "none"}:
+                lookup.setdefault(_normalize_marker_id(cleaned), idx)
+
+    for idx, var_name in enumerate(adata.var_names.astype(str)):
+        lookup.setdefault(_normalize_marker_id(var_name), idx)
+
+    for column in GENE_SYMBOL_COLUMN_CANDIDATES:
+        if column not in adata.var:
+            continue
+        values = adata.var[column].astype(str).to_numpy()
+        for idx, value in enumerate(values):
+            cleaned = str(value).strip()
+            if cleaned and cleaned.lower() not in {"nan", "none"}:
+                lookup.setdefault(_normalize_marker_id(cleaned), idx)
+    return lookup
+
+
+def _resolve_marker_indices(
+    adata: ad.AnnData,
+    marker_ids: tuple[str, ...],
+    *,
+    marker_lookup: dict[str, int],
+    marker_alias_lookup: dict[str, str] | None,
+    max_markers: int | None,
+) -> tuple[list[int], list[str]]:
+    indices: list[int] = []
+    names: list[str] = []
+    seen_indices: set[int] = set()
+    aliases = marker_alias_lookup or {}
+    for marker_id in marker_ids:
+        normalized_marker = _normalize_marker_id(marker_id)
+        candidate_ids = [marker_id]
+        alias = aliases.get(normalized_marker)
+        if alias is not None:
+            candidate_ids.append(alias)
+        idx = None
+        for candidate_id in candidate_ids:
+            idx = marker_lookup.get(_normalize_marker_id(candidate_id))
+            if idx is not None:
+                break
+        if idx is None or idx in seen_indices:
+            continue
+        indices.append(idx)
+        names.append(str(adata.var_names[idx]))
+        seen_indices.add(idx)
+        if max_markers is not None and len(indices) >= int(max_markers):
+            break
+    return indices, names
+
+
+def _normalize_marker_id(value: str) -> str:
+    return str(value).strip().upper()
+
+
+def _matrix_to_dense(matrix: Any) -> np.ndarray:
+    if sparse.issparse(matrix):
+        return np.asarray(matrix.toarray())
+    return np.asarray(matrix)
+
+
+def _copy_matrix(matrix: Any) -> Any:
+    return matrix.copy() if hasattr(matrix, "copy") else np.array(matrix, copy=True)
 
 
 def _padded_limits(values: np.ndarray) -> tuple[float, float]:

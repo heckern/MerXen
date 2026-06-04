@@ -33,6 +33,25 @@ For each active platform in the run:
 6. Save a Scanpy UMAP, Squidpy spatial Leiden scatter, per-cell QC CSV, and the
    clustered `.h5ad`.
 
+By default, the one-shot output path still writes `<sample_id>_clustered.h5ad`,
+but the clustering inside that file comes from an atlas-guided hierarchy:
+
+1. Run a broad low-resolution Leiden round into `obs["leiden_broad"]`.
+2. Score broad clusters against Allen WHB/MapMyCells marker sets, resolving
+   markers by Ensembl ID first and gene symbol second. When the query has only
+   symbols, the stage auto-loads WHB reference H5AD `gene_symbol` metadata from
+   `reference_cache_dir` to bridge Ensembl marker IDs to panel symbols.
+3. Write `obs["broad_atlas_label"]` and the collapsed `obs["broad_class"]`.
+   The built-in broad classes are oligodendrocytes, OPCs, astrocytes, neurons,
+   microglia, fibroblasts, and vascular cells. Confident extra WHB labels such
+   as Ependymal or Choroid plexus are retained.
+4. Recluster each broad class from `layers["counts"]`, so every branch is
+   renormalized and recomputes PCA, neighbors, UMAP, and Leiden.
+5. Split neurons into `Excitatory`, `Inhibitory`, and `Other` with WHB
+   neuronal marker groups, then subtype-cluster each split.
+6. Write per-round UMAP/spatial plots, annotation heatmaps, marker tables,
+   branch H5ADs, and a manifest under `<sample_id>_hierarchical/`.
+
 ## Nextflow process
 
 [`CLUSTERING_SQUIDPY`](../../workflows/modules/clustering_squidpy.nf) — one
@@ -77,9 +96,18 @@ published latest zarrs directly.
 | `leiden_resolution` | Leiden clustering resolution. |
 | `umap_min_dist` / `umap_spread` | UMAP layout controls for compact vs dispersed embeddings. |
 | `random_seed` | Seed for PCA/UMAP/Leiden. |
-| `spatial_point_size` | Squidpy spatial scatter point size. |
+| `spatial_point_size` | Highlight point size for spatial cluster grid plots. |
+| `spatial_scatter_point_size` | Point size for regular spatial scatter plots. |
 | `figure_dpi` | PNG output DPI. |
 | `use_gpu` | Use RAPIDS single-cell acceleration when available. |
+| `hierarchical_enabled` | Run broad atlas annotation plus branch subclustering. Defaults to `true`; set `false` for the legacy one-shot Leiden workflow. |
+| `broad_round` | Round-specific broad clustering settings. Default Leiden resolution `0.2`; unspecified fields inherit top-level filtering/PCA/UMAP settings. |
+| `subcluster_round` | Default non-neuron branch settings. Default Leiden resolution `0.5`. |
+| `subcluster_resolution_overrides` | Optional map from broad class or neuron split label to a Leiden resolution override. |
+| `neuron_split_round` | Coarse neuron Exc/Inh/Other split settings. Default Leiden resolution `0.15`. |
+| `neuron_subcluster_round` | Neuron subtype settings after the split. Default Leiden resolution `0.5`. |
+| `min_branch_cells` | Branches smaller than this are labeled but not reclustered. Default `50`. |
+| `broad_annotation` | Marker lookup, Allen taxonomy metadata/cache path, marker overlap limits, and ambiguity thresholds for atlas-guided cluster labels. |
 
 ## Outputs
 
@@ -89,12 +117,27 @@ Each listed `.png` plot is also written as a same-stem `.pdf`.
 
 | Kind | File | Contents |
 |------|------|----------|
-| QC plot | `<sample_id>_qc_histograms.png` | Histograms for count, gene, geometry, nucleus, and control metrics. |
+| QC plot | `plots/qc/<sample_id>_qc_histograms.png` | Histograms for count, gene, geometry, nucleus, and control metrics. |
 | QC table | `<sample_id>_qc_metrics.csv` | Per-cell QC metrics before filtering. |
-| UMAP | `<sample_id>_umap.png` | UMAP colored by total counts, genes by counts, and Leiden. |
-| Spatial | `<sample_id>_spatial_scatter_leiden.png` | Squidpy spatial scatter colored by Leiden. |
-| Spatial Leiden grid | `<sample_id>_spatial_scatter_leiden_grid.png` | Small-multiple spatial grid with each de novo Leiden cluster highlighted in red against all other cells in grey. |
+| UMAP | `plots/umap/<sample_id>_umap.png` | UMAP colored by total counts, genes by counts, and Leiden. |
+| Spatial | `plots/spatial/<sample_id>_spatial_scatter_leiden.png` | Squidpy spatial scatter colored by Leiden with clean axes and a 200 um scale bar. |
+| Spatial Leiden grid | `plots/spatial_grid/<sample_id>_spatial_scatter_leiden_grid.png` | Small-multiple spatial grid with each de novo Leiden cluster highlighted in red against all other cells in grey. |
 | AnnData | `<sample_id>_clustered.h5ad` | Filtered clustered object, with raw counts in `layers["counts"]`. |
+
+With hierarchical mode enabled, additional artifacts are written under
+`clustering_squidpy_out/<platform>/<sample_id>_hierarchical/`:
+
+| Kind | File | Contents |
+|------|------|----------|
+| Manifest | `<sample_id>_hierarchical_manifest.json` | Branch settings, output paths, and clustering status for every broad class/split. |
+| Broad annotation | `<sample_id>_broad_cluster_annotation.csv` | Broad Leiden cluster to atlas label/class assignment with score, margin, and marker count. |
+| Broad scores | `<sample_id>_broad_annotation_scores.csv` | Cluster-by-atlas marker z-score table. |
+| Broad markers | `<sample_id>_broad_resolved_markers.csv` | Reference markers that overlapped the query panel. |
+| Broad heatmap | `plots/annotation/<sample_id>_broad_annotation_score_heatmap.png` | QC heatmap of broad cluster marker scores. |
+| Branch plots/H5ADs | `branch_<class>/...` | Per-class `.h5ad`, UMAP under `plots/umap/`, spatial plot under `plots/spatial/`, spatial grid under `plots/spatial_grid/`, and panel-gene dotplot under `plots/dotplot/`. |
+| Branch dotplot tables | `branch_<class>/tables/dotplot/...` | Per-subcluster mean expression and fraction-expressing summaries for panel genes. |
+| Neuron split | `branch_neurons/<sample_id>_neurons_split_*` | Excitatory/Inhibitory/Other annotation tables, split `.h5ad`, heatmap under `plots/annotation/`, and plots under `plots/*/`. |
+| Neuron subclusters | `branch_neurons/split_<label>/...` | Per-split neuron subtype `.h5ad`, UMAP, spatial plot, spatial grid, panel-gene dotplot, and dotplot tables. |
 
 ## Notebook
 

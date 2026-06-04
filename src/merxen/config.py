@@ -316,6 +316,45 @@ class ClusteringSquidpySampleConfig(BaseModel):
     shape_key: str | None = None
 
 
+class ClusteringSquidpyRoundConfig(BaseModel):
+    """Per-round Scanpy/Squidpy clustering overrides.
+
+    ``None`` values inherit the top-level ``ClusteringSquidpyConfig`` setting.
+    Round-specific defaults set only the intended Leiden granularity.
+    """
+
+    min_counts: int | None = Field(default=None, ge=0)
+    min_cells: int | None = Field(default=None, ge=1)
+    n_pcs: int | None = Field(default=None, ge=1)
+    n_neighbors: int | None = Field(default=None, ge=2)
+    leiden_resolution: float = Field(default=0.5, gt=0.0)
+    umap_min_dist: float | None = Field(default=None, ge=0.0)
+    umap_spread: float | None = Field(default=None, gt=0.0)
+
+
+class ClusteringSquidpyAnnotationConfig(BaseModel):
+    """Atlas marker options for hierarchical broad-cluster annotation."""
+
+    marker_lookup_path: Path | None = Path(
+        "/media/mathieubo/SSD2/MerXen/mapmycells/" "query_markers.n10.20240221800.json"
+    )
+    taxonomy_metadata_path: Path | None = Path(
+        "/media/mathieubo/SSD2/MerXen/mapmycells/abc_whb/metadata/"
+        "WHB-taxonomy/20240330/cluster_annotation_term.csv"
+    )
+    cluster_membership_path: Path | None = Path(
+        "/media/mathieubo/SSD2/MerXen/mapmycells/abc_whb/metadata/"
+        "WHB-taxonomy/20240330/cluster_to_cluster_annotation_membership.csv"
+    )
+    reference_cache_dir: Path | None = Path("/media/mathieubo/SSD2/MerXen/mapmycells")
+    reference_gene_metadata_paths: list[Path] = Field(default_factory=list)
+    marker_level: str = "CCN202210140_SUPC"
+    min_marker_overlap: int = Field(default=3, ge=1)
+    max_markers_per_label: int | None = Field(default=80, ge=1)
+    score_margin_threshold: float = Field(default=0.0, ge=0.0)
+    unknown_label: str = "Mixed/Unknown"
+
+
 class ClusteringSquidpyConfig(BaseModel):
     """Configuration for the Squidpy/Scanpy clustering stage."""
 
@@ -335,8 +374,27 @@ class ClusteringSquidpyConfig(BaseModel):
     umap_spread: float = 1.0
     random_seed: int = 0
     spatial_point_size: float = 0.5
+    spatial_scatter_point_size: float = 2.0
     figure_dpi: int = 180
     use_gpu: bool = True
+    hierarchical_enabled: bool = True
+    broad_round: ClusteringSquidpyRoundConfig = Field(
+        default_factory=lambda: ClusteringSquidpyRoundConfig(leiden_resolution=0.2)
+    )
+    subcluster_round: ClusteringSquidpyRoundConfig = Field(
+        default_factory=lambda: ClusteringSquidpyRoundConfig(leiden_resolution=0.5)
+    )
+    subcluster_resolution_overrides: dict[str, float] = Field(default_factory=dict)
+    neuron_split_round: ClusteringSquidpyRoundConfig = Field(
+        default_factory=lambda: ClusteringSquidpyRoundConfig(leiden_resolution=0.15)
+    )
+    neuron_subcluster_round: ClusteringSquidpyRoundConfig = Field(
+        default_factory=lambda: ClusteringSquidpyRoundConfig(leiden_resolution=0.5)
+    )
+    broad_annotation: ClusteringSquidpyAnnotationConfig = Field(
+        default_factory=ClusteringSquidpyAnnotationConfig
+    )
+    min_branch_cells: int = Field(default=50, ge=1)
 
 
 class MapMyCellsSampleConfig(BaseModel):

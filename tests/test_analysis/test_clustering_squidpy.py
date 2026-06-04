@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import anndata as ad
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,13 +17,24 @@ from scipy import sparse
 from shapely.geometry import box
 
 from merxen.analysis.clustering_squidpy import (
+    AtlasMarkerSet,
+    _add_spatial_scale_bar,
+    _clean_spatial_axis,
+    _make_neuron_split_marker_sets,
     _run_gpu_clustering,
     adata_from_spatialdata,
+    collapse_atlas_label_to_broad_class,
+    compute_group_gene_summary,
+    load_atlas_marker_sets,
+    plot_annotation_score_heatmap,
+    plot_group_gene_dotplot,
     plot_spatial_cluster_grid,
     plot_spatial_scatter,
     remove_control_features,
     run_scanpy_clustering,
+    score_clusters_by_atlas_markers,
 )
+from merxen.config import ClusteringSquidpyConfig
 
 
 def test_adata_from_spatialdata_adds_spatial_area_and_control_metrics() -> None:
@@ -203,6 +215,38 @@ def test_run_scanpy_clustering_adds_umap_and_leiden() -> None:
     assert out.uns["merxen_clustering_params"]["umap_spread"] == 1.5
 
 
+def test_run_scanpy_clustering_can_start_from_counts_layer() -> None:
+    """Branch reclustering should renormalize from raw counts, not parent log X."""
+    rng = np.random.default_rng(11)
+    counts = rng.poisson(lam=4, size=(12, 5)).astype(np.float32)
+    adata = ad.AnnData(
+        X=np.zeros_like(counts),
+        obs=pd.DataFrame(index=[f"cell{i}" for i in range(12)]),
+        var=pd.DataFrame(index=[f"Gene{i}" for i in range(5)]),
+        layers={"counts": counts.copy()},
+    )
+    adata.obsm["spatial"] = rng.normal(size=(12, 2))
+
+    out = run_scanpy_clustering(
+        adata,
+        min_counts=1,
+        min_cells=1,
+        n_pcs=2,
+        n_neighbors=3,
+        random_seed=11,
+        use_gpu=False,
+        key_added="leiden_branch",
+        input_layer="counts",
+    )
+
+    assert "leiden_branch" in out.obs
+    assert "leiden" not in out.obs
+    assert float(out.layers["counts"].sum()) > 0.0
+    assert out.uns["merxen_clustering_params_leiden_branch"]["input_layer"] == (
+        "counts"
+    )
+
+
 def test_run_scanpy_clustering_preserves_ensembl_ids() -> None:
     """Filtering and clustering should retain gene IDs needed by MapMyCells."""
     rng = np.random.default_rng(2)
@@ -263,6 +307,292 @@ def test_remove_control_features_drops_blank_negative_and_unassigned() -> None:
         "NegControlProbe_00001",
         "UnassignedCodeword_0001",
     ]
+
+
+def test_load_atlas_marker_sets_joins_taxonomy_and_collapses_labels(
+    tmp_path: Path,
+) -> None:
+    """MapMyCells marker keys should resolve through Allen taxonomy metadata."""
+    marker_path = tmp_path / "markers.json"
+    marker_path.write_text(
+        """
+{
+  "CCN202210140_SUPC/CS1": ["ENSG1", "ENSG2"],
+  "CCN202210140_SUPC/CS2": ["ENSG3"],
+  "CCN202210140_SUPC/CS3": ["ENSG4"],
+  "CCN202210140_SUBC/ignored": ["ENSG4"]
+}
+""".strip()
+    )
+    taxonomy_path = tmp_path / "cluster_annotation_term.csv"
+    taxonomy_path.write_text(
+        "\n".join(
+            [
+                "label,name,cluster_annotation_term_set_label",
+                "CS1,Oligodendrocyte,CCN202210140_SUPC",
+                "CS2,Upper-layer intratelencephalic,CCN202210140_SUPC",
+                "CS3,MGE interneuron,CCN202210140_SUPC",
+                "ignored,Ignored,CCN202210140_SUBC",
+            ]
+        )
+        + "\n"
+    )
+    membership_path = tmp_path / "cluster_to_cluster_annotation_membership.csv"
+    membership_path.write_text(
+        "\n".join(
+            [
+                "cluster_annotation_term_label,cluster_annotation_term_set_label,"
+                "cluster_alias,cluster_annotation_term_name",
+                "CS2,CCN202210140_SUPC,1,Upper-layer intratelencephalic",
+                "CS202210140_3820,CCN202210140_NEUR,1,VGLUT1",
+                "CS3,CCN202210140_SUPC,2,MGE interneuron",
+                "CS202210140_3810,CCN202210140_NEUR,2,GABA",
+            ]
+        )
+        + "\n"
+    )
+
+    marker_sets = load_atlas_marker_sets(
+        marker_path,
+        taxonomy_path,
+        cluster_membership_path=membership_path,
+    )
+
+    assert [marker_set.label_name for marker_set in marker_sets] == [
+        "Oligodendrocyte",
+        "Upper-layer intratelencephalic",
+        "MGE interneuron",
+    ]
+    assert marker_sets[0].broad_class == "Oligodendrocytes"
+    assert marker_sets[1].broad_class == "Neurons"
+    assert marker_sets[1].neuron_split == "Excitatory"
+    assert marker_sets[2].neuron_split == "Inhibitory"
+    assert collapse_atlas_label_to_broad_class("Choroid plexus") == ("Choroid plexus")
+
+
+def test_score_clusters_by_atlas_markers_resolves_ensembl_then_symbol() -> None:
+    """Synthetic marker expression should recover known broad labels."""
+    adata = ad.AnnData(
+        X=np.array(
+            [
+                [9, 8, 1, 1],
+                [8, 7, 1, 1],
+                [1, 1, 8, 9],
+                [1, 1, 7, 8],
+            ],
+            dtype=np.float32,
+        ),
+        obs=pd.DataFrame({"leiden_broad": ["0", "0", "1", "1"]}),
+        var=pd.DataFrame(
+            {
+                "gene": ["GeneA", "GeneB", "GeneC", "GeneD"],
+                "ensembl_id": ["ENSGA", "ENSGB", "ENSGC", "ENSGD"],
+            },
+            index=["GeneA", "GeneB", "GeneC", "GeneD"],
+        ),
+    )
+    marker_sets = [
+        AtlasMarkerSet(
+            level="level",
+            label_id="oligo",
+            label_name="Oligodendrocyte",
+            broad_class="Oligodendrocytes",
+            marker_ids=("ENSGA", "ENSGB"),
+        ),
+        AtlasMarkerSet(
+            level="level",
+            label_id="astro",
+            label_name="Astrocyte",
+            broad_class="Astrocytes",
+            marker_ids=("GeneC", "GeneD"),
+        ),
+    ]
+
+    assignments, scores, markers = score_clusters_by_atlas_markers(
+        adata,
+        cluster_key="leiden_broad",
+        marker_sets=marker_sets,
+        min_marker_overlap=2,
+    )
+
+    label_by_cluster = dict(
+        zip(assignments["cluster"], assignments["atlas_label"], strict=True)
+    )
+    assert label_by_cluster == {"0": "Oligodendrocyte", "1": "Astrocyte"}
+    assert set(scores["atlas_label"]) == {"Oligodendrocyte", "Astrocyte"}
+    assert set(markers["n_resolved_markers"]) == {2}
+
+
+def test_score_clusters_by_atlas_markers_uses_marker_alias_lookup() -> None:
+    """Reference gene metadata should bridge Ensembl markers to symbol panels."""
+    adata = ad.AnnData(
+        X=np.array(
+            [
+                [9, 8, 1, 1],
+                [8, 7, 1, 1],
+                [1, 1, 8, 9],
+                [1, 1, 7, 8],
+            ],
+            dtype=np.float32,
+        ),
+        obs=pd.DataFrame({"leiden_broad": ["0", "0", "1", "1"]}),
+        var=pd.DataFrame(index=["GeneA", "GeneB", "GeneC", "GeneD"]),
+    )
+    marker_sets = [
+        AtlasMarkerSet(
+            level="level",
+            label_id="oligo",
+            label_name="Oligodendrocyte",
+            broad_class="Oligodendrocytes",
+            marker_ids=("ENSGA", "ENSGB"),
+        ),
+        AtlasMarkerSet(
+            level="level",
+            label_id="astro",
+            label_name="Astrocyte",
+            broad_class="Astrocytes",
+            marker_ids=("ENSGC", "ENSGD"),
+        ),
+    ]
+
+    assignments, _, markers = score_clusters_by_atlas_markers(
+        adata,
+        cluster_key="leiden_broad",
+        marker_sets=marker_sets,
+        marker_alias_lookup={
+            "ENSGA": "GeneA",
+            "ENSGB": "GeneB",
+            "ENSGC": "GeneC",
+            "ENSGD": "GeneD",
+        },
+        min_marker_overlap=2,
+    )
+
+    label_by_cluster = dict(
+        zip(assignments["cluster"], assignments["atlas_label"], strict=True)
+    )
+    assert label_by_cluster == {"0": "Oligodendrocyte", "1": "Astrocyte"}
+    assert list(markers["n_resolved_markers"]) == [2, 2]
+
+
+def test_score_clusters_by_atlas_markers_unknown_for_low_overlap() -> None:
+    """Panels with too little marker overlap should still get stable outputs."""
+    adata = ad.AnnData(
+        X=np.ones((4, 2), dtype=np.float32),
+        obs=pd.DataFrame({"leiden_broad": ["0", "0", "1", "1"]}),
+        var=pd.DataFrame(index=["GeneA", "GeneB"]),
+    )
+
+    assignments, scores, markers = score_clusters_by_atlas_markers(
+        adata,
+        cluster_key="leiden_broad",
+        marker_sets=[
+            AtlasMarkerSet(
+                level="level",
+                label_id="missing",
+                label_name="Microglia",
+                broad_class="Microglia",
+                marker_ids=("MissingGene",),
+            )
+        ],
+        min_marker_overlap=2,
+        unknown_label="Mixed/Unknown",
+    )
+
+    assert list(assignments["atlas_label"]) == ["Mixed/Unknown", "Mixed/Unknown"]
+    assert scores.empty
+    assert list(scores.columns) == [
+        "cluster",
+        "label_id",
+        "atlas_label",
+        "broad_class",
+        "score",
+        "n_markers",
+        "resolved_markers",
+    ]
+    assert list(markers["n_resolved_markers"]) == [0]
+
+
+def test_neuron_split_marker_sets_group_exc_inh_and_other() -> None:
+    """Neuron supercluster marker sets should collapse to Exc/Inh/Other groups."""
+    marker_sets = [
+        AtlasMarkerSet(
+            level="level",
+            label_id="exc",
+            label_name="Upper-layer intratelencephalic",
+            broad_class="Neurons",
+            marker_ids=("ENSG1",),
+        ),
+        AtlasMarkerSet(
+            level="level",
+            label_id="inh",
+            label_name="MGE interneuron",
+            broad_class="Neurons",
+            marker_ids=("ENSG2",),
+        ),
+        AtlasMarkerSet(
+            level="level",
+            label_id="other",
+            label_name="Unclassified neuron",
+            broad_class="Neurons",
+            marker_ids=("ENSG3",),
+        ),
+    ]
+
+    split_sets = _make_neuron_split_marker_sets(marker_sets)
+
+    markers_by_split = {
+        marker_set.label_name: marker_set.marker_ids for marker_set in split_sets
+    }
+    assert markers_by_split == {
+        "Excitatory": ("ENSG1",),
+        "Inhibitory": ("ENSG2",),
+        "Other": ("ENSG3",),
+    }
+
+
+def test_plot_annotation_score_heatmap_writes_png_and_pdf(tmp_path: Path) -> None:
+    """Annotation heatmaps should be emitted as regular plot artifacts."""
+    score_table = pd.DataFrame(
+        {
+            "cluster": ["0", "1"],
+            "atlas_label": ["Astrocyte", "Microglia"],
+            "score": [1.2, 0.9],
+        }
+    )
+
+    output_path = plot_annotation_score_heatmap(
+        score_table,
+        tmp_path / "scores.png",
+        title="Synthetic scores",
+    )
+
+    assert output_path.exists()
+    assert output_path.with_suffix(".pdf").exists()
+
+
+def test_clustering_squidpy_config_defaults_enable_hierarchical_mode() -> None:
+    """Minimal stage configs should run broad annotation and subclustering."""
+    cfg = ClusteringSquidpyConfig.model_validate(
+        {
+            "pair_id": "pair1",
+            "output_dir": "/tmp/out",
+            "samples": [
+                {
+                    "sample_id": "sample1",
+                    "platform": "MERSCOPE",
+                    "zarr_path": "/tmp/input.zarr",
+                }
+            ],
+        }
+    )
+
+    assert cfg.hierarchical_enabled is True
+    assert cfg.leiden_resolution == 0.5
+    assert cfg.broad_round.leiden_resolution == 0.2
+    assert cfg.subcluster_round.leiden_resolution == 0.5
+    assert cfg.spatial_point_size == 0.5
+    assert cfg.spatial_scatter_point_size == 2.0
 
 
 def test_run_gpu_clustering_uses_chunked_pca_for_sparse_input(
@@ -358,6 +688,24 @@ def test_plot_spatial_scatter_suppresses_squidpy_noise(
     assert "Please specify a valid `library_id`" not in output_text
 
 
+def test_spatial_axis_cleanup_adds_scale_bar_without_coordinate_labels() -> None:
+    """Spatial helper should hide raw coordinate axes and add a 200 um scale bar."""
+    fig, ax = plt.subplots()
+    ax.scatter([0, 100, 300], [0, 50, 100])
+    ax.set_xlabel("spatial1")
+    ax.set_ylabel("spatial2")
+
+    _clean_spatial_axis(ax)
+    _add_spatial_scale_bar(ax, length_um=200)
+
+    assert ax.get_xlabel() == ""
+    assert ax.get_ylabel() == ""
+    assert not ax.get_xticks().size
+    assert not ax.get_yticks().size
+    assert any(text.get_text() == "200 um" for text in ax.texts)
+    plt.close(fig)
+
+
 def test_plot_spatial_cluster_grid_writes_png_and_pdf(tmp_path: Path) -> None:
     """Spatial cluster grid should highlight each Leiden cluster separately."""
     adata = ad.AnnData(
@@ -378,5 +726,43 @@ def test_plot_spatial_cluster_grid_writes_png_and_pdf(tmp_path: Path) -> None:
         point_size_highlight=0.4,
     )
 
+    assert output_path.exists()
+    assert output_path.with_suffix(".pdf").exists()
+
+
+def test_group_gene_dotplot_writes_summary_plot(tmp_path: Path) -> None:
+    """Branch dotplot helpers should summarize mean and fraction by group."""
+    adata = ad.AnnData(
+        X=np.array(
+            [
+                [3.0, 0.0, 0.0],
+                [1.0, 2.0, 0.0],
+                [0.0, 0.0, 5.0],
+                [0.0, 1.0, 4.0],
+            ],
+            dtype=np.float32,
+        ),
+        obs=pd.DataFrame(
+            {"leiden_subcluster": ["0", "0", "1", "1"]},
+            index=[f"cell{i}" for i in range(4)],
+        ),
+        var=pd.DataFrame(index=["GeneA", "GeneB", "GeneC"]),
+    )
+
+    mean_expression, fraction_expression = compute_group_gene_summary(
+        adata,
+        ["GeneA", "GeneB", "GeneC"],
+        groupby="leiden_subcluster",
+    )
+    output_path = plot_group_gene_dotplot(
+        mean_expression,
+        fraction_expression,
+        tmp_path / "gene_dotplot.png",
+    )
+
+    assert mean_expression.loc["0", "GeneA"] == pytest.approx(2.0)
+    assert mean_expression.loc["1", "GeneC"] == pytest.approx(4.5)
+    assert fraction_expression.loc["0", "GeneB"] == pytest.approx(0.5)
+    assert fraction_expression.loc["1", "GeneC"] == pytest.approx(1.0)
     assert output_path.exists()
     assert output_path.with_suffix(".pdf").exists()

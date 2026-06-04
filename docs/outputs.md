@@ -176,12 +176,32 @@ Path: `${outdir}/<pair_id>/clustering_squidpy/`
 
 | File | Contents |
 |------|----------|
-| `clustering_squidpy_out/<platform>/<pair_id>_<platform>_qc_histograms.png` | Histograms for transcripts/cell, genes/cell, cell area, nucleus ratio, and control/blank counts. |
+| `clustering_squidpy_out/<platform>/plots/qc/<pair_id>_<platform>_qc_histograms.png` | Histograms for transcripts/cell, genes/cell, cell area, nucleus ratio, and control/blank counts. |
 | `clustering_squidpy_out/<platform>/<pair_id>_<platform>_qc_metrics.csv` | Per-cell QC metrics used for the histogram panel. |
-| `clustering_squidpy_out/<platform>/<pair_id>_<platform>_umap.png` | Scanpy UMAP colored by total counts, genes by counts, and Leiden cluster. |
-| `clustering_squidpy_out/<platform>/<pair_id>_<platform>_spatial_scatter_leiden.png` | Squidpy spatial scatter colored by Leiden cluster. |
-| `clustering_squidpy_out/<platform>/<pair_id>_<platform>_spatial_scatter_leiden_grid.png` | Small-multiple spatial grid with each de novo Leiden cluster highlighted in red against all other cells in grey. |
+| `clustering_squidpy_out/<platform>/plots/umap/<pair_id>_<platform>_umap.png` | Scanpy UMAP colored by total counts, genes by counts, and Leiden cluster. |
+| `clustering_squidpy_out/<platform>/plots/spatial/<pair_id>_<platform>_spatial_scatter_leiden.png` | Squidpy spatial scatter colored by Leiden cluster, with clean axes and a 200 um scale bar. |
+| `clustering_squidpy_out/<platform>/plots/spatial_grid/<pair_id>_<platform>_spatial_scatter_leiden_grid.png` | Small-multiple spatial grid with each de novo Leiden cluster highlighted in red against all other cells in grey. |
 | `clustering_squidpy_out/<platform>/<pair_id>_<platform>_clustered.h5ad` | Control-feature-filtered, cell/gene-filtered, normalized, log-transformed, clustered AnnData object with raw non-control counts in `layers["counts"]`. |
+
+By default, the same `<sample_id>_clustered.h5ad` path is still written and
+remains the downstream MapMyCells input. In hierarchical mode, the H5AD also
+includes `leiden_broad`,
+`broad_atlas_label`, `broad_class`, `neuron_split_label`,
+`subcluster_label`, and `hierarchical_cluster` in `obs`. Additional QC
+artifacts are written under
+`clustering_squidpy_out/<platform>/<sample_id>_hierarchical/`:
+
+| File | Contents |
+|------|----------|
+| `<sample_id>_hierarchical_manifest.json` | Branch settings, output paths, and clustering status. |
+| `<sample_id>_broad_cluster_annotation.csv` | Broad cluster atlas assignment, score, runner-up, margin, and marker count. |
+| `<sample_id>_broad_annotation_scores.csv` | Cluster-by-atlas score table. |
+| `<sample_id>_broad_resolved_markers.csv` | Panel-overlapping markers selected for each atlas label. |
+| `plots/annotation/<sample_id>_broad_annotation_score_heatmap.png` | Broad annotation score heatmap. |
+| `branch_<class>/...` | Per-branch H5AD plus UMAP, spatial scatter, spatial grid, and panel-gene dotplot in `plots/` subfolders for non-neuron broad classes and extra atlas classes. |
+| `branch_<class>/tables/dotplot/...` | Mean-expression and fraction-expressing summaries used for branch panel-gene dotplots. |
+| `branch_neurons/<sample_id>_neurons_split_*` | Neuron Excitatory/Inhibitory/Other annotation tables, heatmap, plots, and split H5AD. |
+| `branch_neurons/split_<label>/...` | Per-neuron-split subtype H5AD plus UMAP, spatial scatter, spatial grid, panel-gene dotplot, and dotplot summary tables. |
 
 ### MapMyCells
 

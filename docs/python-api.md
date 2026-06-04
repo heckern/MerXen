@@ -162,9 +162,15 @@ See [Section alignment](stages/alignment.md).
 - `remove_control_features(adata)` — drop blank/control/negative variables
   before clustering while recording the removed names in `.uns`.
 - `run_scanpy_clustering(adata, ...)` — filter, normalize, log-transform,
-  PCA, neighbors, UMAP, and Leiden clustering.
+  PCA, neighbors, UMAP, and Leiden clustering. It accepts `key_added` and
+  `input_layer` for branch reclustering from raw counts.
+- `load_atlas_marker_sets`, `score_clusters_by_atlas_markers` — WHB marker
+  parsing and cluster-level atlas marker scoring used by hierarchical mode.
 - `plot_qc_histograms`, `plot_umap`, `plot_spatial_scatter` — PNG writers.
 - `save_qc_metrics`, `save_clustered_adata` — CSV and `.h5ad` outputs.
+- `run_hierarchical_scanpy_clustering(adata, config, ...)` — default broad
+  annotation, branch subclustering, neuron split, and hierarchical QC artifact
+  writer when `hierarchical_enabled` is true.
 - `run_clustering_squidpy(config)` — full stage entry point for
   `CLUSTERING_SQUIDPY`.
 
